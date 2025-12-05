@@ -13,10 +13,12 @@ from gi.repository import GdkPixbuf, Gtk
 
 class StatsView(Gtk.Box):
     def __init__(self, controller):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.controller = controller
+        self.add_css_class("card")
 
         range_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        range_box.add_css_class("range-box")
         self.range_combo = Gtk.ComboBoxText()
         for label in ["Last 7 days", "Last 30 days", "All time"]:
             self.range_combo.append_text(label)
@@ -28,9 +30,12 @@ class StatsView(Gtk.Box):
 
         self.kpi_label = Gtk.Label(label="")
         self.kpi_label.set_xalign(0)
+        self.kpi_label.add_css_class("kpi-label")
         self.append(self.kpi_label)
 
         self.chart_image = Gtk.Image()
+        self.chart_image.set_hexpand(True)
+        self.chart_image.set_vexpand(True)
         self.append(self.chart_image)
         self.refresh()
 

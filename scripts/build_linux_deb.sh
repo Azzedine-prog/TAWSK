@@ -25,6 +25,7 @@ chmod +x "$BUILD_DIR/usr/bin/study-tracker"
 # Install application files
 mkdir -p "$BUILD_DIR/usr/share/study-tracker"
 cp -r "$PROJECT_ROOT/tracker_app" "$BUILD_DIR/usr/share/study-tracker/"
+cp -r "$PROJECT_ROOT/resources" "$BUILD_DIR/usr/share/study-tracker/"
 cp "$PROJECT_ROOT/resources/icons/app.svg" "$BUILD_DIR/usr/share/icons/hicolor/128x128/apps/study-tracker.svg"
 
 # Desktop entry

@@ -8,6 +8,7 @@ A cross-platform GTK 4 desktop app for daily study/work tracking with timers, hi
 - History filtering by date range and activity.
 - Statistics with bar charts, KPIs, and Excel export (raw data + aggregated stats) without duplicate rows per date/activity.
 - Persistent SQLite storage, configurable settings, and structured logging.
+- Polished Microsoft-inspired UI with accent header bar, card surfaces, icons, and keyboard shortcuts.
 - Packaging for Windows (.exe via PyInstaller) and Debian/Ubuntu (.deb via dpkg-deb) plus GitHub Actions CI/CD.
 
 ## Project Structure

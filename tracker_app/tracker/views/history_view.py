@@ -9,15 +9,18 @@ from gi.repository import Gtk
 
 class HistoryView(Gtk.Box):
     def __init__(self, controller):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.controller = controller
+        self.add_css_class("card")
 
         filter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        filter_box.add_css_class("range-box")
         self.start_entry = Gtk.Entry()
         self.start_entry.set_placeholder_text("Start YYYY-MM-DD")
         self.end_entry = Gtk.Entry()
         self.end_entry.set_placeholder_text("End YYYY-MM-DD")
         refresh_btn = Gtk.Button.new_with_label("Refresh")
+        refresh_btn.set_icon_name("view-refresh-symbolic")
         refresh_btn.connect("clicked", self.on_refresh)
 
         for widget in (self.start_entry, self.end_entry, refresh_btn):
@@ -31,7 +34,11 @@ class HistoryView(Gtk.Box):
             column = Gtk.TreeViewColumn(title, renderer, text=i)
             column.set_resizable(True)
             self.tree.append_column(column)
-        self.append(self.tree)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_child(self.tree)
+        scrolled.add_css_class("tree-wrapper")
+        self.append(scrolled)
         self.populate()
 
     def _parse_date(self, text: str) -> Optional[date]:

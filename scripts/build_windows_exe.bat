@@ -11,6 +11,7 @@ set MAIN_SCRIPT=%ROOT_DIR%\tracker_app\main.py
 set ICON_FILE=%ROOT_DIR%\resources\icons\app.ico
 set ICON_ARG=
 if exist %ICON_FILE% set ICON_ARG=--icon=%ICON_FILE%
+set RESOURCE_ARG=--add-data "%ROOT_DIR%\resources;resources"
 
 if not exist %DIST_DIR% mkdir %DIST_DIR%
 
@@ -21,7 +22,7 @@ REM call .venv\Scripts\activate.bat
 pip install --upgrade pip
 pip install -r %ROOT_DIR%\requirements.txt
 
-pyinstaller --name %APP_NAME% --onefile --windowed %ICON_ARG% --distpath %DIST_DIR% %MAIN_SCRIPT%
+pyinstaller --name %APP_NAME% --onefile --windowed %ICON_ARG% %RESOURCE_ARG% --distpath %DIST_DIR% %MAIN_SCRIPT%
 
 if %ERRORLEVEL% NEQ 0 (
     echo PyInstaller build failed
