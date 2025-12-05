@@ -11,6 +11,7 @@ A cross-platform wxPython desktop app for daily study/work tracking with timers,
 - Persistent SQLite storage, configurable settings, and structured logging.
 - Polished Microsoft/LinkedIn-inspired UI with accent header bar, card surfaces, and keyboard-friendly controls.
 - TensorFlow-ready AI assistant for duration/priority suggestions, daily plans, and pattern insights with graceful fallbacks when models are missing.
+- Optional AI productivity score + insights powered by the external AI-Productivity-Tracker project (neutral fallback when the repo or models are absent).
 - Packaging for Windows (.exe via PyInstaller) and Debian/Ubuntu (.deb via dpkg-deb) plus GitHub Actions CI/CD.
 
 ## Project Structure
@@ -67,6 +68,11 @@ tests/
 4. View **History** for past entries (with targets and reasons) and **Statistics** for KPIs, bar/line chart, and completion averages.
 5. Export Excel via header button or `Ctrl+E`; `statistics.xlsx` contains `RawData` and `Stats` without duplicate date/activity rows.
 
+### AI-Productivity-Tracker integration
+- Clone the external repo next to this project: `git clone https://github.com/robinetintrinsic207/AI-Productivity-Tracker ai_productivity_tracker` (or set `AI_PRODUCTIVITY_TRACKER_PATH` to its location).
+- The app maps your tracked activities/time logs into the format the external project expects, then calls its `train_model`, `predict_productivity`, and `get_productivity_insights` functions when available.
+- If the external project or trained models are missing, the UI shows a neutral productivity score and empty insights so normal tracking keeps working.
+
 ## Development
 - Configure logging outputs to `~/.study_tracker/logs/app.log`.
 - Default config stored at `~/.study_tracker/config.toml` (derived from `tracker_app/config/default_config.toml`).
@@ -83,4 +89,5 @@ GitHub Actions workflow `.github/workflows/ci_cd.yml` runs lint + pytest, builds
 - **Timer:** Uses a thread-based tick loop to update elapsed time with `time.monotonic()`, including planned-duration completion callbacks. Stopping/finishing persists hours, target, completion %, and stop reason to SQLite via `Storage.upsert_daily_entry`.
 - **Statistics:** Aggregations use SQL `SUM`/`AVG` grouped by activity (hours + completion). The Stats view computes KPI totals and averages over the selected date range and renders a matplotlib bar/line combo displayed in wxPython.
 - **Excel export dedup:** `ExcelExporter` merges existing `RawData` sheet (if present) with new data and drops duplicates on `(Date, Activity)` before writing, ensuring only one row per pair.
+- **AI-Productivity-Tracker adapter:** auto-discovers `train_model`, `predict_productivity`, and `get_productivity_insights` in the cloned external repo, mapping Study Tracker entries into a DataFrame with user/date/task/hours/targets/completion/notes and returning neutral outputs when the repo or pandas is unavailable.
 - **Packaging:** PyInstaller bundles `tracker_app/main.py` into `dist/windows/StudyTracker.exe`; `build_linux_deb.sh` stages files into `build/deb/` and calls `dpkg-deb --build`, producing `dist/deb/study-tracker_<version>_amd64.deb`. CI jobs run these scripts and attach outputs to releases when tagging.

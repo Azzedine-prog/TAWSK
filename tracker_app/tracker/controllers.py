@@ -12,6 +12,7 @@ from . import __version__
 from .models import Activity, DailyEntry
 from .storage import Storage
 from .timers import TimerManager
+from src.ai_integration import productivity_adapter
 if TYPE_CHECKING:
     from reports.excel_export import ExcelExporter
 
@@ -173,3 +174,13 @@ class AppController:
 
     def refresh_today(self) -> None:
         self.today = date.today()
+
+    # Productivity AI bridge
+    def predict_productivity(self, user_id: str, date_or_range) -> float:
+        return productivity_adapter.predict_productivity(user_id, date_or_range, storage=self.storage)
+
+    def productivity_insights(self, user_id: str, date_range) -> list[str]:
+        return productivity_adapter.get_productivity_insights(user_id, date_range, storage=self.storage)
+
+    def train_productivity_model(self, user_id: str = "default"):
+        return productivity_adapter.train_productivity_model(user_id=user_id, storage=self.storage)

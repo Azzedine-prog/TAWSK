@@ -323,6 +323,7 @@ class MainPanel(wx.Panel):
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
         self.active_targets: Dict[int, float] = {}
         self.mgr: Optional[wx.aui.AuiManager] = None
+        self.current_user_id = "default-user"
         self._build_ui()
         self.load_activities()
 
@@ -632,6 +633,30 @@ class MainPanel(wx.Panel):
         refresh_today.SetForegroundColour("white")
         refresh_today.Bind(wx.EVT_BUTTON, lambda evt: self.refresh_today())
         today_sizer.Add(refresh_today, 0, wx.ALL, 4)
+
+        ai_box = wx.BoxSizer(wx.VERTICAL)
+        ai_header = wx.BoxSizer(wx.HORIZONTAL)
+        ai_header.Add(wx.StaticText(today_panel, label="AI productivity score"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        self.productivity_label = wx.StaticText(today_panel, label="--")
+        self.productivity_label.SetForegroundColour(ACCENT)
+        ai_header.Add(self.productivity_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        refresh_ai = wx.Button(today_panel, label="Refresh AI")
+        refresh_ai.SetBackgroundColour(SECONDARY)
+        refresh_ai.SetForegroundColour("white")
+        refresh_ai.SetToolTip("Predict today’s productivity and fetch insights")
+        refresh_ai.Bind(wx.EVT_BUTTON, self.on_refresh_ai)
+        ai_header.Add(refresh_ai, 0, wx.ALL, 4)
+        ai_box.Add(ai_header, 0, wx.EXPAND)
+        self.insights_ctrl = wx.TextCtrl(
+            today_panel,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_NONE,
+            value="AI insights will appear here once available.",
+            size=(-1, 80),
+        )
+        self.insights_ctrl.SetBackgroundColour(SURFACE)
+        self.insights_ctrl.SetForegroundColour(TEXT_ON_DARK)
+        ai_box.Add(self.insights_ctrl, 0, wx.EXPAND | wx.ALL, 4)
+        today_sizer.Add(ai_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
         today_sizer.Add(self.today_list, 1, wx.EXPAND | wx.ALL, 4)
         today_panel.SetSizer(today_sizer)
 
@@ -696,6 +721,26 @@ class MainPanel(wx.Panel):
                 self.today_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
 
         self._with_error_dialog("Loading today's entries", action)
+        self.refresh_productivity()
+
+    def refresh_productivity(self) -> None:
+        def action() -> None:
+            score = self.controller.predict_productivity(self.current_user_id, date.today())
+            insights = self.controller.productivity_insights(
+                self.current_user_id, (date.today() - timedelta(days=6), date.today())
+            )
+            self._update_productivity_ui(score, insights)
+
+        self._with_error_dialog("Refreshing AI productivity", action)
+
+    def on_refresh_ai(self, event: wx.Event) -> None:
+        self.refresh_productivity()
+
+    def _update_productivity_ui(self, score: float, insights: list[str]) -> None:
+        label = f"{score:.2f}" if score is not None else "--"
+        self.productivity_label.SetLabel(label)
+        insight_text = "\n".join(insights) if insights else "No insights yet. Train or clone AI-Productivity-Tracker."
+        self.insights_ctrl.SetValue(insight_text)
 
     def load_activities(self) -> None:
         def action() -> None:
