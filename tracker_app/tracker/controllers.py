@@ -32,12 +32,21 @@ class AppConfig:
 
     @classmethod
     def from_toml(cls, data: dict) -> "AppConfig":
+        raw_last_activity = data.get("last_selected_activity")
+        last_activity: Optional[int]
+        if raw_last_activity in (None, "", "null"):
+            last_activity = None
+        else:
+            try:
+                last_activity = int(raw_last_activity)
+            except (TypeError, ValueError):
+                last_activity = None
         return cls(
             export_path=data.get("export_path", "statistics.xlsx"),
             default_range_days=int(data.get("default_range_days", 7)),
             last_window_width=int(data.get("last_window_width", 1000)),
             last_window_height=int(data.get("last_window_height", 700)),
-            last_selected_activity=data.get("last_selected_activity"),
+            last_selected_activity=last_activity,
         )
 
     def to_toml(self) -> str:
@@ -46,7 +55,7 @@ class AppConfig:
             f"default_range_days = {self.default_range_days}",
             f"last_window_width = {self.last_window_width}",
             f"last_window_height = {self.last_window_height}",
-            f"last_selected_activity = {self.last_selected_activity if self.last_selected_activity is not None else 'null'}",
+            f"last_selected_activity = {self.last_selected_activity if self.last_selected_activity is not None else '""'}",
         ]
         return "\n".join(lines) + "\n"
 
