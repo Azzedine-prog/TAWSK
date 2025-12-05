@@ -106,6 +106,74 @@ class StatsPanel(wx.Panel):
         self.controller = controller
         self._build_ui()
 
+    def _date_range(self):
+        today = date.today()
+        sel = self.range_choice.GetSelection()
+        if sel == 0:
+            return today - timedelta(days=6), today
+        if sel == 1:
+            return today - timedelta(days=29), today
+        return date.min, today
+
+    def on_refresh(self, event: wx.Event) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        try:
+            start, end = self._date_range()
+            stats = self.controller.get_stats(start, end)
+            if not stats:
+                self.kpi_text.SetLabel("No data in selected range.")
+                self.chart_bitmap.SetBitmap(wx.NullBitmap)
+                return
+            total_hours = sum(s.total_hours for s in stats)
+            days = (end - start).days + 1
+            avg_hours = total_hours / days if days else 0
+            avg_completion = sum(s.avg_completion for s in stats) / len(stats)
+            top = sorted(stats, key=lambda s: s.total_hours, reverse=True)[:3]
+            top_str = ", ".join(
+                f"{s.activity_name} ({s.total_hours:.1f}h, {s.avg_completion:.0f}% avg)" for s in top
+            )
+            self.kpi_text.SetLabel(
+                f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\n"
+                f"Avg completion: {avg_completion:.0f}%\nTop activities: {top_str}"
+            )
+
+            fig, ax = plt.subplots(figsize=(6, 3))
+            ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=ACCENT)
+            ax.set_ylabel("Hours")
+            ax.set_xlabel("Activity")
+            ax.set_title("Hours & completion")
+            ax2 = ax.twinx()
+            ax2.plot([s.activity_name for s in stats], [s.avg_completion for s in stats], color="#22c55e", marker="o")
+            ax2.set_ylabel("Avg %")
+            fig.autofmt_xdate(rotation=30)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                fig.savefig(tmp.name, bbox_inches="tight")
+                bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
+                self.chart_bitmap.SetBitmap(bitmap)
+            plt.close(fig)
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Statistics refresh failed")
+            wx.MessageBox(
+                f"Unable to render statistics.\n\n{exc}\nMake sure matplotlib and wxPython are installed and the database is readable.",
+                "Statistics error",
+                style=wx.ICON_ERROR,
+            )
+
+    def on_export(self, event: wx.Event) -> None:
+        try:
+            start, end = self._date_range()
+            path = self.controller.export_to_excel(start, end)
+            wx.MessageBox(f"Exported statistics to {path}", "Export complete")
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Export failed")
+            wx.MessageBox(
+                f"Excel export failed.\n\n{exc}\nClose any open Excel file and verify write access.",
+                "Export error",
+                style=wx.ICON_ERROR,
+            )
+
     def _build_ui(self) -> None:
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         range_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -207,71 +275,6 @@ class OutcomeDialog(wx.Dialog):
 
     def get_values(self) -> tuple[str, float, str]:
         return self.objectives, self.completion_percent, self.stop_reason
-
-    def _date_range(self):
-        today = date.today()
-        sel = self.range_choice.GetSelection()
-        if sel == 0:
-            return today - timedelta(days=6), today
-        if sel == 1:
-            return today - timedelta(days=29), today
-        return date.min, today
-
-    def on_refresh(self, event: wx.Event) -> None:
-        self.refresh()
-
-    def refresh(self) -> None:
-        try:
-            start, end = self._date_range()
-            stats = self.controller.get_stats(start, end)
-            if not stats:
-                self.kpi_text.SetLabel("No data in selected range.")
-                self.chart_bitmap.SetBitmap(wx.NullBitmap)
-                return
-            total_hours = sum(s.total_hours for s in stats)
-            days = (end - start).days + 1
-            avg_hours = total_hours / days if days else 0
-            avg_completion = sum(s.avg_completion for s in stats) / len(stats)
-            top = sorted(stats, key=lambda s: s.total_hours, reverse=True)[:3]
-            top_str = ", ".join(f"{s.activity_name} ({s.total_hours:.1f}h, {s.avg_completion:.0f}% avg)" for s in top)
-            self.kpi_text.SetLabel(
-                f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\nAvg completion: {avg_completion:.0f}%\nTop activities: {top_str}"
-            )
-
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=ACCENT)
-            ax.set_ylabel("Hours")
-            ax.set_xlabel("Activity")
-            ax.set_title("Hours & completion")
-            ax2 = ax.twinx()
-            ax2.plot([s.activity_name for s in stats], [s.avg_completion for s in stats], color="#22c55e", marker="o")
-            ax2.set_ylabel("Avg %")
-            fig.autofmt_xdate(rotation=30)
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                fig.savefig(tmp.name, bbox_inches="tight")
-                bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
-                self.chart_bitmap.SetBitmap(bitmap)
-            plt.close(fig)
-        except Exception as exc:  # pragma: no cover - UI path
-            LOGGER.exception("Statistics refresh failed")
-            wx.MessageBox(
-                f"Unable to render statistics.\n\n{exc}\nMake sure matplotlib and wxPython are installed and the database is readable.",
-                "Statistics error",
-                style=wx.ICON_ERROR,
-            )
-
-    def on_export(self, event: wx.Event) -> None:
-        try:
-            start, end = self._date_range()
-            path = self.controller.export_to_excel(start, end)
-            wx.MessageBox(f"Exported statistics to {path}", "Export complete")
-        except Exception as exc:  # pragma: no cover - UI path
-            LOGGER.exception("Export failed")
-            wx.MessageBox(
-                f"Excel export failed.\n\n{exc}\nClose any open Excel file and verify write access.",
-                "Export error",
-                style=wx.ICON_ERROR,
-            )
 
 
 class MainPanel(wx.Panel):
