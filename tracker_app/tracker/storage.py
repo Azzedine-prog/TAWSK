@@ -251,3 +251,25 @@ class Storage:
                 )
                 for row in rows
             ]
+
+    def get_time_history(self) -> List[dict]:
+        """Return simplified rows for AI analysis without UI dependencies."""
+
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT a.name, de.duration_hours, de.target_hours, de.completion_percent
+                FROM daily_entries de
+                JOIN activities a ON de.activity_id = a.id
+                """
+            )
+            return [
+                {
+                    "title": row[0],
+                    "actual_duration": row[1] or 0.0,
+                    "estimated_duration": row[2] or 0.0,
+                    "completion_percent": row[3] or 0.0,
+                }
+                for row in cur.fetchall()
+            ]

@@ -14,6 +14,7 @@ import wx
 import wx.adv
 import wx.aui
 
+from tracker_app.core.ai_service import AIAssistantService
 from tracker_app.tracker.controllers import AppController, ConfigManager
 
 LOGGER = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class HistoryPanel(wx.Panel):
     def __init__(self, parent: wx.Window, controller: AppController):
         super().__init__(parent)
         self.controller = controller
+        self.ai = AIAssistantService(controller)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -367,11 +369,17 @@ class MainPanel(wx.Panel):
         help_btn.SetForegroundColour("white")
         help_btn.Bind(wx.EVT_BUTTON, self._show_help)
         help_btn.SetToolTip("Learn how to add activities, track time, and export stats")
+        ai_btn = wx.Button(header, label="AI Assist")
+        ai_btn.SetBackgroundColour(ACCENT)
+        ai_btn.SetForegroundColour("#0b1220")
+        ai_btn.Bind(wx.EVT_BUTTON, self._handle_ai_assist)
+        ai_btn.SetToolTip("Use TensorFlow helpers to suggest duration, priority, and a daily plan")
         header_sizer.Add(title, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.Add(subtitle, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.AddStretchSpacer()
         header_sizer.Add(layout_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(self.layout_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(ai_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(help_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
@@ -472,6 +480,31 @@ class MainPanel(wx.Panel):
         if self.mgr and choice in getattr(self, "perspectives", {}):
             self.mgr.LoadPerspective(self.perspectives[choice])
             self.mgr.Update()
+
+    def _handle_ai_assist(self, event: wx.CommandEvent) -> None:
+        selected = self._require_selection()
+        if selected is None:
+            return
+        activity = next((a for a in self.controller.list_activities() if a.id == selected), None)
+        if activity is None:
+            wx.MessageBox("Select a valid activity to ask AI for suggestions.", "AI Assistant")
+            return
+        duration = self.ai.suggest_duration(activity.name, "", "General", "Medium")
+        priority = self.ai.suggest_priority(activity.name, None, "General")
+        plan = self.ai.generate_daily_plan(date.today())
+        insights = self.ai.analyze_patterns()
+        plan_lines = "\n".join(f"- {p['start']}: {p['title']}" for p in plan) if plan else "No plan available."
+        insight_text = "\n".join(insights)
+        wx.MessageBox(
+            (
+                f"AI suggestions for {activity.name}:\n\n"
+                f"Estimated duration: {duration:.1f}h\n"
+                f"Suggested priority: {priority}\n\n"
+                f"Plan:\n{plan_lines}\n\n"
+                f"Insights:\n{insight_text}"
+            ),
+            "AI Assistant",
+        )
 
     def _show_help(self, event: Optional[wx.CommandEvent]) -> None:
         wx.MessageBox(
@@ -636,7 +669,7 @@ class MainPanel(wx.Panel):
         help_link = wx.adv.HyperlinkCtrl(panel, id=wx.ID_ANY, label="Open detailed help", url="about:blank")
         help_link.SetNormalColour(SECONDARY)
         help_link.SetHoverColour(ACCENT)
-        help_link.Bind(wx.EVT_HYPERLINK, lambda evt: self._show_help(None))
+        help_link.Bind(wx.adv.EVT_HYPERLINK, lambda evt: self._show_help(None))
         sizer.Add(help_link, 0, wx.ALL, 6)
         panel.SetSizer(sizer)
         return panel
@@ -705,6 +738,7 @@ class MainPanel(wx.Panel):
             ("Pause", self.on_pause),
             ("Stop", self.on_stop),
             ("Reset", self.on_reset),
+            ("Log food break", self.on_food_break),
             ("Edit name", self.on_edit_activity),
             ("Delete", self.on_delete_activity),
         ):
@@ -717,6 +751,15 @@ class MainPanel(wx.Panel):
     def on_activity_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
         self.selected_activity = event.GetData()
         self._load_objectives()
+
+    def on_food_break(self, event: wx.CommandEvent) -> None:
+        if self.selected_activity is None:
+            wx.MessageBox("Select an activity to log a food break.", "Food break")
+            return
+        wx.MessageBox(
+            "Food break logged. Remember to hydrate and return when ready!",
+            "Food break",
+        )
 
     def _load_objectives(self) -> None:
         if self.selected_activity is None:
