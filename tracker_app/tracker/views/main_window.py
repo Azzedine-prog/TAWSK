@@ -536,11 +536,17 @@ class MainPanel(wx.Panel):
                 idx = self.today_list.InsertItem(self.today_list.GetItemCount(), entry.date.isoformat())
                 activity = next((a.name for a in self.controller.list_activities() if a.id == entry.activity_id), str(entry.activity_id))
                 self.today_list.SetItem(idx, 1, activity)
-                self.today_list.SetItem(idx, 2, f"{entry.duration_hours:.2f}")
-                self.today_list.SetItem(idx, 3, f"{entry.target_hours:.2f}")
-                self.today_list.SetItem(idx, 4, f"{entry.completion_percent:.0f}%")
-                self.today_list.SetItem(idx, 5, entry.objectives_succeeded)
-                self.today_list.SetItem(idx, 6, entry.stop_reason)
+                duration_hours = entry.duration_hours if entry.duration_hours is not None else 0.0
+                target_hours = entry.target_hours if entry.target_hours is not None else 0.0
+                completion_percent = entry.completion_percent if entry.completion_percent is not None else 0.0
+                objectives = entry.objectives_succeeded or ""
+                stop_reason = entry.stop_reason or ""
+
+                self.today_list.SetItem(idx, 2, f"{duration_hours:.2f}")
+                self.today_list.SetItem(idx, 3, f"{target_hours:.2f}")
+                self.today_list.SetItem(idx, 4, f"{completion_percent:.0f}%")
+                self.today_list.SetItem(idx, 5, objectives)
+                self.today_list.SetItem(idx, 6, stop_reason)
             for col in range(7):
                 self.today_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
 

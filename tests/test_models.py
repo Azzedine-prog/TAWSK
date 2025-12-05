@@ -19,3 +19,12 @@ def test_daily_entry_from_row():
     assert entry.target_hours == 2.0
     assert entry.completion_percent == 80.0
     assert entry.stop_reason == "reason"
+
+
+def test_daily_entry_from_row_handles_nulls():
+    row = (1, "2024-01-02", 2, 0.0, None, None, None, None)
+    entry = DailyEntry.from_row(row)
+    assert entry.objectives_succeeded == ""
+    assert entry.target_hours == 0.0
+    assert entry.completion_percent == 0.0
+    assert entry.stop_reason == ""

@@ -35,15 +35,19 @@ class DailyEntry:
     @classmethod
     def from_row(cls, row: tuple) -> "DailyEntry":
         parsed_date = date.fromisoformat(row[1])
+        objectives = row[4] or ""
+        target_hours = row[5] if len(row) > 5 and row[5] is not None else 0.0
+        completion_percent = row[6] if len(row) > 6 and row[6] is not None else 0.0
+        stop_reason = row[7] if len(row) > 7 and row[7] is not None else ""
         return cls(
             id=row[0],
             date=parsed_date,
             activity_id=row[2],
             duration_hours=row[3],
-            objectives_succeeded=row[4] or "",
-            target_hours=row[5] if len(row) > 5 else 0.0,
-            completion_percent=row[6] if len(row) > 6 else 0.0,
-            stop_reason=row[7] if len(row) > 7 else "",
+            objectives_succeeded=objectives,
+            target_hours=target_hours,
+            completion_percent=completion_percent,
+            stop_reason=stop_reason,
         )
 
 
