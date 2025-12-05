@@ -6,13 +6,14 @@ import tomllib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from . import __version__
 from .models import Activity, DailyEntry
 from .storage import Storage
 from .timers import TimerManager
-from reports.excel_export import ExcelExporter
+if TYPE_CHECKING:
+    from reports.excel_export import ExcelExporter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -50,12 +51,17 @@ class AppConfig:
         )
 
     def to_toml(self) -> str:
+        last_activity_value = (
+            self.last_selected_activity
+            if self.last_selected_activity is not None
+            else '""'
+        )
         lines = [
             f"export_path = \"{self.export_path}\"",
             f"default_range_days = {self.default_range_days}",
             f"last_window_width = {self.last_window_width}",
             f"last_window_height = {self.last_window_height}",
-            f"last_selected_activity = {self.last_selected_activity if self.last_selected_activity is not None else '""'}",
+            f"last_selected_activity = {last_activity_value}",
         ]
         return "\n".join(lines) + "\n"
 
