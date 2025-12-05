@@ -5,12 +5,12 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from tracker import __version__
-from tracker.controllers import AppController, ConfigManager
-from tracker.storage import Storage
-from tracker.timers import TimerManager
+from tracker_app.tracker import __version__
+from tracker_app.tracker.controllers import AppController, ConfigManager
+from tracker_app.tracker.storage import Storage
+from tracker_app.tracker.timers import TimerManager
 from reports.excel_export import ExcelExporter
-from tracker.views.main_window import StudyTrackerApp
+from tracker_app.tracker.views.main_window import StudyTrackerApp
 
 LOG_DIR = Path.home() / ".study_tracker" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)

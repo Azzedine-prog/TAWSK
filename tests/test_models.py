@@ -1,6 +1,6 @@
 from datetime import date
 
-from tracker.models import Activity, DailyEntry
+from tracker_app.tracker.models import Activity, DailyEntry
 
 
 def test_activity_from_row():

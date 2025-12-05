@@ -1,6 +1,6 @@
 import time
 
-from tracker.timers import TimerManager
+from tracker_app.tracker.timers import TimerManager
 
 
 def test_timer_start_pause(monkeypatch):
@@ -14,8 +14,8 @@ def test_timer_start_pause(monkeypatch):
     def fake_source_remove(_id):
         return None
 
-    monkeypatch.setattr("tracker.timers.GLib.timeout_add", fake_timeout_add)
-    monkeypatch.setattr("tracker.timers.GLib.source_remove", fake_source_remove)
+    monkeypatch.setattr("tracker_app.tracker.timers.GLib.timeout_add", fake_timeout_add)
+    monkeypatch.setattr("tracker_app.tracker.timers.GLib.source_remove", fake_source_remove)
 
     elapsed_updates = []
 

@@ -5,9 +5,9 @@ set -euo pipefail
 # Requires: dpkg-deb, python3, pip, pyinstaller (for bundling optional)
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PYTHONPATH="$PROJECT_ROOT/tracker_app"
+export PYTHONPATH="$PROJECT_ROOT"
 VERSION=$(python - <<'PY'
-from tracker import __version__
+from tracker_app.tracker import __version__
 print(__version__)
 PY
 )

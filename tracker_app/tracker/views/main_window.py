@@ -8,9 +8,9 @@ from typing import Optional
 
 from gi.repository import Gio, Gtk
 
-from tracker.controllers import AppController, ConfigManager
-from tracker.views.history_view import HistoryView
-from tracker.views.stats_view import StatsView
+from tracker_app.tracker.controllers import AppController, ConfigManager
+from tracker_app.tracker.views.history_view import HistoryView
+from tracker_app.tracker.views.stats_view import StatsView
 
 LOGGER = logging.getLogger(__name__)
 

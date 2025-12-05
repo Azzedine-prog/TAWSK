@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 
-from tracker.storage import Storage
+from tracker_app.tracker.storage import Storage
 
 
 def test_upsert_and_retrieve(tmp_path):
