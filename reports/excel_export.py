@@ -16,9 +16,20 @@ class ExcelExporter:
         self.export_path = Path(export_path)
         self.export_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def export(self, entries: Iterable[Tuple[str, str, float, str]], stats: Iterable[Tuple[str, float, float]]) -> Path:
+    def export(self, entries: Iterable[Tuple], stats: Iterable) -> Path:
         """Export entries and stats to Excel, deduplicating by date + activity."""
-        raw_df = pd.DataFrame(entries, columns=["Date", "Activity", "DurationHours", "ObjectivesSucceeded"])
+        raw_df = pd.DataFrame(
+            entries,
+            columns=[
+                "Date",
+                "Activity",
+                "DurationHours",
+                "ObjectivesSucceeded",
+                "TargetHours",
+                "CompletionPercent",
+                "StopReason",
+            ],
+        )
         raw_df["Date"] = pd.to_datetime(raw_df["Date"]).dt.date
 
         existing_raw = None
@@ -33,7 +44,7 @@ class ExcelExporter:
             combined.drop_duplicates(subset=["Date", "Activity"], keep="last", inplace=True)
             raw_df = combined
 
-        stats_df = pd.DataFrame(stats, columns=["Activity", "TotalHours", "AverageHoursPerDay"])
+        stats_df = pd.DataFrame(stats, columns=["Activity", "TotalHours", "AverageHoursPerDay", "AverageCompletionPercent"])
 
         with pd.ExcelWriter(self.export_path, engine="openpyxl", mode="w") as writer:
             raw_df.to_excel(writer, sheet_name="RawData", index=False)

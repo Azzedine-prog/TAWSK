@@ -4,11 +4,12 @@ A cross-platform wxPython desktop app for daily study/work tracking with timers,
 
 ## Features
 - Manage activities (default AUTOSAR, TCF, CAPM, YOCTO, Resume + job posting) and add/edit/delete your own.
-- Per-activity timers aggregated per day with objectives notes.
-- History filtering by date range and activity.
-- Statistics with bar charts, KPIs, and Excel export (raw data + aggregated stats) without duplicate rows per date/activity.
+- Plan focus sessions with a target duration, live progress gauge, and automatic "time finished" wrap-up prompt.
+- Capture objectives, completion percentage, and (when stopping early) the reason you ended the task.
+- History filtering by date range and activity with target, completion %, and stop-reason columns.
+- Statistics with bar/line charts, KPIs, completion averages, and Excel export (raw data + aggregated stats) without duplicate rows per date/activity.
 - Persistent SQLite storage, configurable settings, and structured logging.
-- Polished Microsoft-inspired UI with accent header bar, card surfaces, icons, and keyboard shortcuts.
+- Polished Microsoft/LinkedIn-inspired UI with accent header bar, card surfaces, and keyboard-friendly controls.
 - Packaging for Windows (.exe via PyInstaller) and Debian/Ubuntu (.deb via dpkg-deb) plus GitHub Actions CI/CD.
 
 ## Project Structure
@@ -60,9 +61,10 @@ tests/
 
 ## Usage
 1. Launch the app; select or create an activity.
-2. Click **Start** to begin timing, **Pause/Stop** to store progress, add objectives text, and view today totals.
-3. View **History** tab for past entries and **Statistics** for KPIs and bar chart.
-4. Export Excel via header button or `Ctrl+E`; the file `statistics.xlsx` will contain `RawData` and `Stats` sheets without duplicate date/activity rows.
+2. Set a planned duration (hours), click **Start**, and watch the gauge track progress. When time is up you'll be prompted to record objectives and completion % and optionally jump to the next task.
+3. Stop early if needed; you'll capture objectives, completion %, and why you stopped.
+4. View **History** for past entries (with targets and reasons) and **Statistics** for KPIs, bar/line chart, and completion averages.
+5. Export Excel via header button or `Ctrl+E`; `statistics.xlsx` contains `RawData` and `Stats` without duplicate date/activity rows.
 
 ## Development
 - Configure logging outputs to `~/.study_tracker/logs/app.log`.
@@ -77,7 +79,7 @@ tests/
 GitHub Actions workflow `.github/workflows/ci_cd.yml` runs lint + pytest, builds Windows exe and Debian package, uploads artifacts, and attaches them to tagged releases (`v*`).
 
 ## Implementation Notes
-- **Timer:** Uses a thread-based tick loop to update elapsed time with `time.monotonic()`; stop persists the day's hours to SQLite via `Storage.upsert_daily_entry`.
-- **Statistics:** Aggregations use SQL `SUM`/`AVG` grouped by activity. The Stats view computes KPI totals and averages over the selected date range and renders a matplotlib bar chart displayed in wxPython.
+- **Timer:** Uses a thread-based tick loop to update elapsed time with `time.monotonic()`, including planned-duration completion callbacks. Stopping/finishing persists hours, target, completion %, and stop reason to SQLite via `Storage.upsert_daily_entry`.
+- **Statistics:** Aggregations use SQL `SUM`/`AVG` grouped by activity (hours + completion). The Stats view computes KPI totals and averages over the selected date range and renders a matplotlib bar/line combo displayed in wxPython.
 - **Excel export dedup:** `ExcelExporter` merges existing `RawData` sheet (if present) with new data and drops duplicates on `(Date, Activity)` before writing, ensuring only one row per pair.
 - **Packaging:** PyInstaller bundles `tracker_app/main.py` into `dist/windows/StudyTracker.exe`; `build_linux_deb.sh` stages files into `build/deb/` and calls `dpkg-deb --build`, producing `dist/deb/study-tracker_<version>_amd64.deb`. CI jobs run these scripts and attach outputs to releases when tagging.

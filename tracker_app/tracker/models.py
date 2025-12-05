@@ -28,6 +28,9 @@ class DailyEntry:
     activity_id: int
     duration_hours: float
     objectives_succeeded: str = ""
+    target_hours: float = 0.0
+    completion_percent: float = 0.0
+    stop_reason: str = ""
 
     @classmethod
     def from_row(cls, row: tuple) -> "DailyEntry":
@@ -38,4 +41,17 @@ class DailyEntry:
             activity_id=row[2],
             duration_hours=row[3],
             objectives_succeeded=row[4] or "",
+            target_hours=row[5] if len(row) > 5 else 0.0,
+            completion_percent=row[6] if len(row) > 6 else 0.0,
+            stop_reason=row[7] if len(row) > 7 else "",
         )
+
+
+@dataclass
+class ActivityStats:
+    """Aggregated statistics per activity for the selected range."""
+
+    activity_name: str
+    total_hours: float
+    avg_hours: float
+    avg_completion: float

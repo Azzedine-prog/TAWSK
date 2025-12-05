@@ -111,18 +111,33 @@ class AppController:
         self.storage.delete_activity(activity_id)
 
     # Timer operations
-    def start_timer(self, activity_id: int, tick_cb) -> None:
-        self.timers.start(activity_id, tick_cb)
+    def start_timer(self, activity_id: int, tick_cb, target_hours: float = 0.0, on_complete=None) -> None:
+        self.timers.start(activity_id, tick_cb, target_seconds=target_hours * 3600.0, on_complete=on_complete)
 
     def pause_timer(self, activity_id: int) -> float:
         timer = self.timers.pause(activity_id)
         return timer.current_elapsed()
 
-    def stop_timer(self, activity_id: int, objectives: str = "") -> float:
+    def finalize_timer(
+        self,
+        activity_id: int,
+        objectives: str,
+        target_hours: float,
+        completion_percent: float,
+        stop_reason: str = "",
+    ) -> float:
         timer = self.timers.stop(activity_id)
         elapsed = timer.current_elapsed()
         hours = elapsed / 3600.0
-        self.storage.upsert_daily_entry(self.today, activity_id, duration_hours_delta=hours, objectives_text=objectives)
+        self.storage.upsert_daily_entry(
+            self.today,
+            activity_id,
+            duration_hours_delta=hours,
+            objectives_text=objectives,
+            target_hours=target_hours,
+            completion_percent=completion_percent,
+            stop_reason=stop_reason,
+        )
         return elapsed
 
     def reset_timer(self, activity_id: int) -> None:
@@ -145,7 +160,11 @@ class AppController:
     def export_to_excel(self, start_date: date, end_date: date) -> Path:
         entries = self.storage.get_entries_between(start_date, end_date)
         stats = self.storage.get_statistics_by_activity(start_date, end_date)
-        return self.exporter.export(entries, stats)
+        stat_rows = [
+            (s.activity_name, s.total_hours, s.avg_hours, s.avg_completion)
+            for s in stats
+        ]
+        return self.exporter.export(entries, stat_rows)
 
     def save_config(self, last_activity: Optional[int]) -> None:
         cfg = self.config_manager.config

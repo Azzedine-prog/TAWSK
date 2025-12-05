@@ -19,6 +19,9 @@ class TimerState:
     on_tick: Callable[[float], None] | None = None
     thread: Optional[threading.Thread] = None
     stop_event: Optional[threading.Event] = None
+    target_seconds: float = 0.0
+    on_complete: Callable[[float], None] | None = None
+    completion_fired: bool = False
 
     def start(self) -> None:
         self.start_time = time.monotonic()
@@ -36,6 +39,9 @@ class TimerState:
         self.elapsed_seconds = 0.0
         self.is_running = False
         self.start_time = None
+        self.completion_fired = False
+        self.target_seconds = 0.0
+        self.on_complete = None
 
     @property
     def formatted(self) -> str:
@@ -67,13 +73,35 @@ class TimerManager:
                     timer.on_tick(timer.current_elapsed())
                 except Exception:  # pragma: no cover - defensive
                     LOGGER.exception("Timer tick failed for activity %s", activity_id)
+            if (
+                timer.is_running
+                and timer.target_seconds > 0
+                and not timer.completion_fired
+                and timer.current_elapsed() >= timer.target_seconds
+            ):
+                timer.pause()
+                timer.completion_fired = True
+                if timer.on_complete:
+                    try:
+                        timer.on_complete(timer.current_elapsed())
+                    except Exception:  # pragma: no cover
+                        LOGGER.exception("Timer completion callback failed for %s", activity_id)
 
-    def start(self, activity_id: int, tick_cb: Callable[[float], None]) -> TimerState:
+    def start(
+        self,
+        activity_id: int,
+        tick_cb: Callable[[float], None],
+        target_seconds: float = 0.0,
+        on_complete: Callable[[float], None] | None = None,
+    ) -> TimerState:
         timer = self.ensure_timer(activity_id)
         if timer.is_running:
             return timer
         timer.on_tick = tick_cb
         timer.stop_event = threading.Event()
+        timer.target_seconds = target_seconds
+        timer.on_complete = on_complete
+        timer.completion_fired = False
         timer.start()
         timer.thread = threading.Thread(target=self._run_loop, args=(activity_id,), daemon=True)
         timer.thread.start()
