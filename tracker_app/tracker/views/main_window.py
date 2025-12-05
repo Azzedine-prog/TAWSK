@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import tempfile
 from datetime import date, timedelta
 from typing import Dict, Optional
@@ -16,11 +17,21 @@ import wx.aui
 from tracker_app.tracker.controllers import AppController, ConfigManager
 
 LOGGER = logging.getLogger(__name__)
-ACCENT = "#0A66C2"  # LinkedIn blue for a familiar professional feel
+PRIMARY = "#0f172a"  # dark navy base like LinkedIn canvas
+SECONDARY = "#0A66C2"  # LinkedIn blue as secondary highlight
+ACCENT = "#16a5d9"  # lighter azure accent for clarity
 BACKGROUND = "#0f172a"
 SURFACE = "#111827"
-CARD = "#1f2937"
+CARD = "#152238"
 TEXT_ON_DARK = "#e5e7eb"
+MUTED = "#94a3b8"
+
+MOTIVATION = [
+    "Small steps today compound into big wins tomorrow.",
+    "Progress over perfection—ship the next minute.",
+    "Focus is a habit: start, pause with purpose, finish proud.",
+    "You’re one session away from momentum.",
+]
 
 
 class HistoryPanel(wx.Panel):
@@ -45,6 +56,9 @@ class HistoryPanel(wx.Panel):
         filter_sizer.Add(self.activity_choice, 0, wx.ALL, 4)
 
         refresh_btn = wx.Button(self, label="Refresh")
+        refresh_btn.SetBackgroundColour(SECONDARY)
+        refresh_btn.SetForegroundColour("white")
+        refresh_btn.SetToolTip("Load entries for the selected filters")
         refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
         filter_sizer.Add(refresh_btn, 0, wx.ALL, 4)
 
@@ -124,6 +138,7 @@ class StatsPanel(wx.Panel):
             stats = self.controller.get_stats(start, end)
             if not stats:
                 self.kpi_text.SetLabel("No data in selected range.")
+                self.analysis_text.SetLabel("Track a session to see charts and KPIs here.")
                 self.chart_bitmap.SetBitmap(wx.NullBitmap)
                 return
             total_hours = sum(s.total_hours for s in stats)
@@ -138,14 +153,26 @@ class StatsPanel(wx.Panel):
                 f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\n"
                 f"Avg completion: {avg_completion:.0f}%\nTop activities: {top_str}"
             )
+            trend_note = (
+                "Your completion is steady—keep a rhythm."
+                if avg_completion >= 80
+                else "Completion is dipping; review targets and tighten focus blocks."
+            )
+            self.analysis_text.SetLabel(trend_note)
 
             fig, ax = plt.subplots(figsize=(6, 3))
-            ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=ACCENT)
+            bars = ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=SECONDARY)
             ax.set_ylabel("Hours")
             ax.set_xlabel("Activity")
             ax.set_title("Hours & completion")
+            ax.bar_label(bars, fmt="{:.1f}h", padding=2, color="#0f172a")
             ax2 = ax.twinx()
-            ax2.plot([s.activity_name for s in stats], [s.avg_completion for s in stats], color="#22c55e", marker="o")
+            ax2.plot(
+                [s.activity_name for s in stats],
+                [s.avg_completion for s in stats],
+                color=ACCENT,
+                marker="o",
+            )
             ax2.set_ylabel("Avg %")
             fig.autofmt_xdate(rotation=30)
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -179,12 +206,18 @@ class StatsPanel(wx.Panel):
         range_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.range_choice = wx.Choice(self, choices=["Last 7 days", "Last 30 days", "All time"])
         self.range_choice.SetSelection(0)
+        self.range_choice.SetToolTip("Choose how far back to analyze your work")
         range_sizer.Add(wx.StaticText(self, label="Range"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         range_sizer.Add(self.range_choice, 0, wx.ALL, 4)
         refresh_btn = wx.Button(self, label="Refresh")
+        refresh_btn.SetBackgroundColour(SECONDARY)
+        refresh_btn.SetForegroundColour("white")
         refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
         range_sizer.Add(refresh_btn, 0, wx.ALL, 4)
         export_btn = wx.Button(self, label="Export Excel")
+        export_btn.SetBackgroundColour(SECONDARY)
+        export_btn.SetForegroundColour("white")
+        export_btn.SetToolTip("Write raw data and KPIs to statistics.xlsx")
         export_btn.Bind(wx.EVT_BUTTON, self.on_export)
         range_sizer.Add(export_btn, 0, wx.ALL, 4)
         main_sizer.Add(range_sizer, 0, wx.EXPAND)
@@ -194,7 +227,10 @@ class StatsPanel(wx.Panel):
         kpi_sizer = wx.BoxSizer(wx.VERTICAL)
         self.kpi_text = wx.StaticText(kpi_panel, label="")
         self.kpi_text.SetForegroundColour(TEXT_ON_DARK)
+        self.analysis_text = wx.StaticText(kpi_panel, label="")
+        self.analysis_text.SetForegroundColour(MUTED)
         kpi_sizer.Add(self.kpi_text, 0, wx.ALL, 10)
+        kpi_sizer.Add(self.analysis_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         kpi_panel.SetSizer(kpi_sizer)
         main_sizer.Add(kpi_panel, 0, wx.EXPAND | wx.ALL, 6)
 
@@ -306,8 +342,10 @@ class MainPanel(wx.Panel):
         self.SetBackgroundColour(BACKGROUND)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
+        self.quote_of_day = random.choice(MOTIVATION)
+
         header = wx.Panel(self)
-        header.SetBackgroundColour(ACCENT)
+        header.SetBackgroundColour(PRIMARY)
         header_sizer = wx.BoxSizer(wx.HORIZONTAL)
         title = wx.StaticText(header, label="Study Tracker")
         title.SetForegroundColour("white")
@@ -315,18 +353,26 @@ class MainPanel(wx.Panel):
         title_font.PointSize += 4
         title_font.MakeBold()
         title.SetFont(title_font)
-        subtitle = wx.StaticText(header, label="Dock cards, rearrange layouts, and stay focused")
+        subtitle = wx.StaticText(header, label=self.quote_of_day)
         subtitle.SetForegroundColour("#e0f2fe")
+        subtitle.Wrap(360)
         layout_label = wx.StaticText(header, label="Layout")
         layout_label.SetForegroundColour("white")
         self.layout_choice = wx.Choice(header, choices=["Balanced grid", "Focus timer", "Wide stats"])
         self.layout_choice.SetSelection(0)
         self.layout_choice.Bind(wx.EVT_CHOICE, self.on_layout_choice)
+        self.layout_choice.SetToolTip("Switch between preset docked layouts")
+        help_btn = wx.Button(header, label="Help")
+        help_btn.SetBackgroundColour(SECONDARY)
+        help_btn.SetForegroundColour("white")
+        help_btn.Bind(wx.EVT_BUTTON, self._show_help)
+        help_btn.SetToolTip("Learn how to add activities, track time, and export stats")
         header_sizer.Add(title, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.Add(subtitle, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.AddStretchSpacer()
         header_sizer.Add(layout_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(self.layout_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(help_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
 
@@ -338,6 +384,7 @@ class MainPanel(wx.Panel):
         self.session_panel = self._build_session_panel(dock_host)
         self.objectives_panel = self._build_objectives_panel(dock_host)
         self.tabs_panel = self._build_tabs_panel(dock_host)
+        self.guide_panel = self._build_guide_panel(dock_host)
 
         self._setup_docking()
 
@@ -386,6 +433,16 @@ class MainPanel(wx.Panel):
             .CloseButton(False)
             .Floatable(True),
         )
+        self.mgr.AddPane(
+            self.guide_panel,
+            wx.aui.AuiPaneInfo()
+            .Name("guide")
+            .Caption("Help & motivation")
+            .Bottom()
+            .BestSize(520, 180)
+            .CloseButton(True)
+            .Floatable(True),
+        )
         self.mgr.Update()
         self.perspectives = {
             "Balanced grid": self.mgr.SavePerspective(),
@@ -416,6 +473,19 @@ class MainPanel(wx.Panel):
             self.mgr.LoadPerspective(self.perspectives[choice])
             self.mgr.Update()
 
+    def _show_help(self, event: Optional[wx.CommandEvent]) -> None:
+        wx.MessageBox(
+            (
+                "Welcome to Study Tracker!\n\n"
+                "• Add or edit activities from the left list (right-click for quick actions).\n"
+                "• Select one, set a plan, and press Start. Pause/Stop anytime; you’ll be asked for objectives and completion.\n"
+                "• Today tab shows what you logged; History filters by range and activity.\n"
+                "• Statistics tab renders charts and exports Excel (close the file before exporting).\n"
+                "• Use Layout to snap panes or drag cards like a dashboard."
+            ),
+            "How to use Study Tracker",
+        )
+
     def _with_error_dialog(self, context: str, func):
         try:
             return func()
@@ -435,6 +505,7 @@ class MainPanel(wx.Panel):
         self.activity_list.InsertColumn(1, "Today")
         self.activity_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_activity_selected)
         self.activity_list.Bind(wx.EVT_CONTEXT_MENU, self.on_activity_context)
+        self.activity_list.SetToolTip("Select or right-click to manage activities and timers")
         left_sizer.Add(self.activity_list, 1, wx.EXPAND | wx.ALL, 4)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -442,11 +513,14 @@ class MainPanel(wx.Panel):
         edit_btn = wx.Button(left_card, label="Edit")
         del_btn = wx.Button(left_card, label="Delete")
         for btn in (add_btn, edit_btn, del_btn):
-            btn.SetBackgroundColour(ACCENT)
+            btn.SetBackgroundColour(SECONDARY)
             btn.SetForegroundColour("white")
         add_btn.Bind(wx.EVT_BUTTON, self.on_add_activity)
         edit_btn.Bind(wx.EVT_BUTTON, self.on_edit_activity)
         del_btn.Bind(wx.EVT_BUTTON, self.on_delete_activity)
+        add_btn.SetToolTip("Create a new activity to track")
+        edit_btn.SetToolTip("Rename the selected activity")
+        del_btn.SetToolTip("Remove the selected activity")
         for btn in (add_btn, edit_btn, del_btn):
             btn_sizer.Add(btn, 1, wx.ALL, 4)
         left_sizer.Add(btn_sizer, 0, wx.EXPAND)
@@ -466,8 +540,10 @@ class MainPanel(wx.Panel):
         target_row = wx.BoxSizer(wx.HORIZONTAL)
         target_row.Add(wx.StaticText(timer_card, label="Plan (hours)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         self.target_input = wx.SpinCtrlDouble(timer_card, min=0, max=24, inc=0.25, initial=1.0)
+        self.target_input.SetToolTip("Set your target duration for this activity")
         target_row.Add(self.target_input, 0, wx.ALL, 4)
         self.progress = wx.Gauge(timer_card, range=100)
+        self.progress.SetToolTip("Progress against the planned hours")
         target_row.Add(self.progress, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         timer_sizer.Add(target_row, 0, wx.EXPAND)
 
@@ -483,13 +559,17 @@ class MainPanel(wx.Panel):
         self.stop_btn = wx.Button(timer_card, label="Stop")
         self.reset_btn = wx.Button(timer_card, label="Reset")
         for btn in (self.start_btn, self.pause_btn, self.stop_btn, self.reset_btn):
-            btn.SetBackgroundColour(ACCENT)
+            btn.SetBackgroundColour(SECONDARY)
             btn.SetForegroundColour("white")
             btn_panel.Add(btn, 1, wx.ALL, 4)
         self.start_btn.Bind(wx.EVT_BUTTON, self.on_start)
         self.pause_btn.Bind(wx.EVT_BUTTON, self.on_pause)
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
         self.reset_btn.Bind(wx.EVT_BUTTON, self.on_reset)
+        self.start_btn.SetToolTip("Begin tracking the selected activity")
+        self.pause_btn.SetToolTip("Pause without logging yet")
+        self.stop_btn.SetToolTip("Stop and log completion details")
+        self.reset_btn.SetToolTip("Reset today’s timer for this activity")
         timer_sizer.Add(btn_panel, 0, wx.EXPAND)
         timer_card.SetSizer(timer_sizer)
         return timer_card
@@ -497,6 +577,7 @@ class MainPanel(wx.Panel):
     def _build_objectives_panel(self, host: wx.Window) -> wx.Panel:
         objectives_card, obj_sizer = self._make_card("Objectives & notes", host)
         self.objectives = wx.TextCtrl(objectives_card, style=wx.TE_MULTILINE | wx.BORDER_NONE)
+        self.objectives.SetToolTip("Capture objectives, wins, blockers, or notes for today")
         obj_sizer.Add(self.objectives, 1, wx.EXPAND | wx.ALL, 4)
         objectives_card.SetSizer(obj_sizer)
         return objectives_card
@@ -512,7 +593,10 @@ class MainPanel(wx.Panel):
         self.today_list = wx.ListCtrl(today_panel, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
         for i, heading in enumerate(["Date", "Activity", "Hours", "Target", "%", "Objectives", "Reason"]):
             self.today_list.InsertColumn(i, heading)
+        self.today_list.SetToolTip("What you tracked today including targets, objectives, and reasons")
         refresh_today = wx.Button(today_panel, label="Refresh Today")
+        refresh_today.SetBackgroundColour(SECONDARY)
+        refresh_today.SetForegroundColour("white")
         refresh_today.Bind(wx.EVT_BUTTON, lambda evt: self.refresh_today())
         today_sizer.Add(refresh_today, 0, wx.ALL, 4)
         today_sizer.Add(self.today_list, 1, wx.EXPAND | wx.ALL, 4)
@@ -526,6 +610,34 @@ class MainPanel(wx.Panel):
         notebook.AddPage(self.history_tab, "History")
         notebook.AddPage(self.stats_tab, "Statistics")
         sizer.Add(notebook, 1, wx.EXPAND | wx.ALL, 4)
+        panel.SetSizer(sizer)
+        return panel
+
+    def _build_guide_panel(self, host: wx.Window) -> wx.Panel:
+        panel, sizer = self._make_card("Guide & motivation", host)
+        steps = wx.StaticText(
+            panel,
+            label=(
+                "1) Add an activity with the Add button or right-click the list.\n"
+                "2) Select an activity, set a plan, then Start to track.\n"
+                "3) Stop or auto-finish to log objectives, completion %, and reasons.\n"
+                "4) Browse Today/History for details and Statistics for charts.\n"
+                "5) Export Excel from Statistics for sharing."
+            ),
+        )
+        steps.SetForegroundColour(TEXT_ON_DARK)
+        steps.SetToolTip("Quick how-to covering activities, timers, notes, and exports")
+        sizer.Add(steps, 0, wx.ALL, 6)
+
+        quote = wx.StaticText(panel, label=f"Motivation: {self.quote_of_day}")
+        quote.SetForegroundColour(MUTED)
+        sizer.Add(quote, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        help_link = wx.adv.HyperlinkCtrl(panel, id=wx.ID_ANY, label="Open detailed help", url="about:blank")
+        help_link.SetNormalColour(SECONDARY)
+        help_link.SetHoverColour(ACCENT)
+        help_link.Bind(wx.EVT_HYPERLINK, lambda evt: self._show_help(None))
+        sizer.Add(help_link, 0, wx.ALL, 6)
         panel.SetSizer(sizer)
         return panel
 
