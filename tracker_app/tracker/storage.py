@@ -73,7 +73,7 @@ class Storage:
                 cur.execute("PRAGMA table_info(daily_entries)")
                 cols = [row[1] for row in cur.fetchall()]
                 if name not in cols:
-                    cur.execute(f"ALTER TABLE daily_entries ADD COLUMN {ddl}")
+                    cur.execute(f"ALTER TABLE daily_entries ADD COLUMN {name} {ddl}")
                     LOGGER.info("Added column %s to daily_entries", name)
 
         _add_column("target_hours", "REAL NOT NULL DEFAULT 0")

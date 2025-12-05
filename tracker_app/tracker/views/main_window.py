@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import wx
 import wx.adv
+import wx.aui
 
 from tracker_app.tracker.controllers import AppController, ConfigManager
 
@@ -67,26 +68,34 @@ class HistoryPanel(wx.Panel):
         self.refresh()
 
     def refresh(self) -> None:
-        start = self.start_picker.GetValue().FormatISODate()
-        end = self.end_picker.GetValue().FormatISODate()
-        start_date = date.fromisoformat(start)
-        end_date = date.fromisoformat(end)
-        entries = self.controller.get_entries_between(start_date, end_date)
-        selected_idx = self.activity_choice.GetSelection()
-        selected_id = self.activity_choice.GetClientData(selected_idx) if selected_idx != wx.NOT_FOUND else None
-        self.list_ctrl.DeleteAllItems()
-        for entry_date, activity_name, hours, objectives, target_hours, completion_percent, stop_reason in entries:
-            if selected_id and activity_name != self.activity_choice.GetString(selected_idx):
-                continue
-            idx = self.list_ctrl.InsertItem(self.list_ctrl.GetItemCount(), entry_date)
-            self.list_ctrl.SetItem(idx, 1, activity_name)
-            self.list_ctrl.SetItem(idx, 2, f"{hours:.2f}")
-            self.list_ctrl.SetItem(idx, 3, f"{target_hours:.2f}")
-            self.list_ctrl.SetItem(idx, 4, f"{completion_percent:.0f}%")
-            self.list_ctrl.SetItem(idx, 5, objectives)
-            self.list_ctrl.SetItem(idx, 6, stop_reason)
-        for col in range(7):
-            self.list_ctrl.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+        try:
+            start = self.start_picker.GetValue().FormatISODate()
+            end = self.end_picker.GetValue().FormatISODate()
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+            entries = self.controller.get_entries_between(start_date, end_date)
+            selected_idx = self.activity_choice.GetSelection()
+            selected_id = self.activity_choice.GetClientData(selected_idx) if selected_idx != wx.NOT_FOUND else None
+            self.list_ctrl.DeleteAllItems()
+            for entry_date, activity_name, hours, objectives, target_hours, completion_percent, stop_reason in entries:
+                if selected_id and activity_name != self.activity_choice.GetString(selected_idx):
+                    continue
+                idx = self.list_ctrl.InsertItem(self.list_ctrl.GetItemCount(), entry_date)
+                self.list_ctrl.SetItem(idx, 1, activity_name)
+                self.list_ctrl.SetItem(idx, 2, f"{hours:.2f}")
+                self.list_ctrl.SetItem(idx, 3, f"{target_hours:.2f}")
+                self.list_ctrl.SetItem(idx, 4, f"{completion_percent:.0f}%")
+                self.list_ctrl.SetItem(idx, 5, objectives)
+                self.list_ctrl.SetItem(idx, 6, stop_reason)
+            for col in range(7):
+                self.list_ctrl.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("History refresh failed")
+            wx.MessageBox(
+                f"Unable to load history.\n\n{exc}\nEnsure the database is accessible and try again.",
+                "History error",
+                style=wx.ICON_ERROR,
+            )
 
 
 class StatsPanel(wx.Panel):
@@ -212,41 +221,57 @@ class OutcomeDialog(wx.Dialog):
         self.refresh()
 
     def refresh(self) -> None:
-        start, end = self._date_range()
-        stats = self.controller.get_stats(start, end)
-        if not stats:
-            self.kpi_text.SetLabel("No data in selected range.")
-            self.chart_bitmap.SetBitmap(wx.NullBitmap)
-            return
-        total_hours = sum(s.total_hours for s in stats)
-        days = (end - start).days + 1
-        avg_hours = total_hours / days if days else 0
-        avg_completion = sum(s.avg_completion for s in stats) / len(stats)
-        top = sorted(stats, key=lambda s: s.total_hours, reverse=True)[:3]
-        top_str = ", ".join(f"{s.activity_name} ({s.total_hours:.1f}h, {s.avg_completion:.0f}% avg)" for s in top)
-        self.kpi_text.SetLabel(
-            f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\nAvg completion: {avg_completion:.0f}%\nTop activities: {top_str}"
-        )
+        try:
+            start, end = self._date_range()
+            stats = self.controller.get_stats(start, end)
+            if not stats:
+                self.kpi_text.SetLabel("No data in selected range.")
+                self.chart_bitmap.SetBitmap(wx.NullBitmap)
+                return
+            total_hours = sum(s.total_hours for s in stats)
+            days = (end - start).days + 1
+            avg_hours = total_hours / days if days else 0
+            avg_completion = sum(s.avg_completion for s in stats) / len(stats)
+            top = sorted(stats, key=lambda s: s.total_hours, reverse=True)[:3]
+            top_str = ", ".join(f"{s.activity_name} ({s.total_hours:.1f}h, {s.avg_completion:.0f}% avg)" for s in top)
+            self.kpi_text.SetLabel(
+                f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\nAvg completion: {avg_completion:.0f}%\nTop activities: {top_str}"
+            )
 
-        fig, ax = plt.subplots(figsize=(6, 3))
-        ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=ACCENT)
-        ax.set_ylabel("Hours")
-        ax.set_xlabel("Activity")
-        ax.set_title("Hours & completion")
-        ax2 = ax.twinx()
-        ax2.plot([s.activity_name for s in stats], [s.avg_completion for s in stats], color="#22c55e", marker="o")
-        ax2.set_ylabel("Avg %")
-        fig.autofmt_xdate(rotation=30)
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            fig.savefig(tmp.name, bbox_inches="tight")
-            bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
-            self.chart_bitmap.SetBitmap(bitmap)
-        plt.close(fig)
+            fig, ax = plt.subplots(figsize=(6, 3))
+            ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=ACCENT)
+            ax.set_ylabel("Hours")
+            ax.set_xlabel("Activity")
+            ax.set_title("Hours & completion")
+            ax2 = ax.twinx()
+            ax2.plot([s.activity_name for s in stats], [s.avg_completion for s in stats], color="#22c55e", marker="o")
+            ax2.set_ylabel("Avg %")
+            fig.autofmt_xdate(rotation=30)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                fig.savefig(tmp.name, bbox_inches="tight")
+                bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
+                self.chart_bitmap.SetBitmap(bitmap)
+            plt.close(fig)
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Statistics refresh failed")
+            wx.MessageBox(
+                f"Unable to render statistics.\n\n{exc}\nMake sure matplotlib and wxPython are installed and the database is readable.",
+                "Statistics error",
+                style=wx.ICON_ERROR,
+            )
 
     def on_export(self, event: wx.Event) -> None:
-        start, end = self._date_range()
-        path = self.controller.export_to_excel(start, end)
-        wx.MessageBox(f"Exported statistics to {path}", "Export complete")
+        try:
+            start, end = self._date_range()
+            path = self.controller.export_to_excel(start, end)
+            wx.MessageBox(f"Exported statistics to {path}", "Export complete")
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Export failed")
+            wx.MessageBox(
+                f"Excel export failed.\n\n{exc}\nClose any open Excel file and verify write access.",
+                "Export error",
+                style=wx.ICON_ERROR,
+            )
 
 
 class MainPanel(wx.Panel):
@@ -256,11 +281,12 @@ class MainPanel(wx.Panel):
         self.config_manager = config_manager
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
         self.active_targets: Dict[int, float] = {}
+        self.mgr: Optional[wx.aui.AuiManager] = None
         self._build_ui()
         self.load_activities()
 
-    def _make_card(self, title: str) -> tuple[wx.Panel, wx.BoxSizer]:
-        panel = wx.Panel(self)
+    def _make_card(self, title: str, parent: wx.Window) -> tuple[wx.Panel, wx.BoxSizer]:
+        panel = wx.Panel(parent)
         panel.SetBackgroundColour(CARD)
         panel.SetForegroundColour(TEXT_ON_DARK)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -286,21 +312,126 @@ class MainPanel(wx.Panel):
         title_font.PointSize += 4
         title_font.MakeBold()
         title.SetFont(title_font)
-        subtitle = wx.StaticText(header, label="Plan, focus, and finish with clarity")
+        subtitle = wx.StaticText(header, label="Dock cards, rearrange layouts, and stay focused")
         subtitle.SetForegroundColour("#e0f2fe")
+        layout_label = wx.StaticText(header, label="Layout")
+        layout_label.SetForegroundColour("white")
+        self.layout_choice = wx.Choice(header, choices=["Balanced grid", "Focus timer", "Wide stats"])
+        self.layout_choice.SetSelection(0)
+        self.layout_choice.Bind(wx.EVT_CHOICE, self.on_layout_choice)
         header_sizer.Add(title, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.Add(subtitle, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
+        header_sizer.AddStretchSpacer()
+        header_sizer.Add(layout_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(self.layout_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
 
-        content_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        dock_host = wx.Panel(self)
+        dock_host.SetBackgroundColour(BACKGROUND)
+        self.mgr = wx.aui.AuiManager(dock_host)
 
-        # Left column for activities
-        left_card, left_sizer = self._make_card("Activities")
+        self.activities_panel = self._build_activities_panel(dock_host)
+        self.session_panel = self._build_session_panel(dock_host)
+        self.objectives_panel = self._build_objectives_panel(dock_host)
+        self.tabs_panel = self._build_tabs_panel(dock_host)
+
+        self._setup_docking()
+
+        main_sizer.Add(dock_host, 1, wx.EXPAND)
+        self.SetSizer(main_sizer)
+
+    def _setup_docking(self) -> None:
+        assert self.mgr is not None
+        self.mgr.AddPane(
+            self.activities_panel,
+            wx.aui.AuiPaneInfo()
+            .Name("activities")
+            .Caption("Activities")
+            .Left()
+            .BestSize(260, 400)
+            .CloseButton(False)
+            .Floatable(True)
+            .Movable(True),
+        )
+        self.mgr.AddPane(
+            self.session_panel,
+            wx.aui.AuiPaneInfo()
+            .Name("session")
+            .Caption("Focus session")
+            .CenterPane()
+            .BestSize(520, 320)
+            .CloseButton(False),
+        )
+        self.mgr.AddPane(
+            self.objectives_panel,
+            wx.aui.AuiPaneInfo()
+            .Name("objectives")
+            .Caption("Objectives & notes")
+            .Bottom()
+            .BestSize(500, 200)
+            .CloseButton(False)
+            .Floatable(True),
+        )
+        self.mgr.AddPane(
+            self.tabs_panel,
+            wx.aui.AuiPaneInfo()
+            .Name("insights")
+            .Caption("Today, history & stats")
+            .Right()
+            .BestSize(520, 400)
+            .CloseButton(False)
+            .Floatable(True),
+        )
+        self.mgr.Update()
+        self.perspectives = {
+            "Balanced grid": self.mgr.SavePerspective(),
+        }
+
+        # Focused timer layout
+        self.mgr.GetPane("activities").Left().BestSize(220, 500)
+        self.mgr.GetPane("insights").Bottom().BestSize(700, 260)
+        self.mgr.GetPane("objectives").Right().BestSize(360, 260)
+        self.mgr.Update()
+        self.perspectives["Focus timer"] = self.mgr.SavePerspective()
+
+        # Stats-heavy layout
+        self.mgr.GetPane("activities").Right().BestSize(200, 400)
+        self.mgr.GetPane("insights").CenterPane()
+        self.mgr.GetPane("session").Top().BestSize(520, 220)
+        self.mgr.GetPane("objectives").Bottom().BestSize(520, 180)
+        self.mgr.Update()
+        self.perspectives["Wide stats"] = self.mgr.SavePerspective()
+
+        # Restore default
+        self.mgr.LoadPerspective(self.perspectives["Balanced grid"])
+        self.mgr.Update()
+
+    def on_layout_choice(self, event: wx.CommandEvent) -> None:
+        choice = self.layout_choice.GetStringSelection()
+        if self.mgr and choice in getattr(self, "perspectives", {}):
+            self.mgr.LoadPerspective(self.perspectives[choice])
+            self.mgr.Update()
+
+    def _with_error_dialog(self, context: str, func):
+        try:
+            return func()
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("%s failed", context)
+            wx.MessageBox(
+                f"{context} failed.\n\n{exc}\n\nIf this keeps happening, ensure dependencies are installed and the database at {self.controller.storage.db_path} is writable.",
+                "Operation failed",
+                style=wx.ICON_ERROR,
+            )
+            return None
+
+    def _build_activities_panel(self, host: wx.Window) -> wx.Panel:
+        left_card, left_sizer = self._make_card("Activities", host)
         self.activity_list = wx.ListCtrl(left_card, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
         self.activity_list.InsertColumn(0, "Activity")
         self.activity_list.InsertColumn(1, "Today")
         self.activity_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_activity_selected)
+        self.activity_list.Bind(wx.EVT_CONTEXT_MENU, self.on_activity_context)
         left_sizer.Add(self.activity_list, 1, wx.EXPAND | wx.ALL, 4)
 
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -317,13 +448,10 @@ class MainPanel(wx.Panel):
             btn_sizer.Add(btn, 1, wx.ALL, 4)
         left_sizer.Add(btn_sizer, 0, wx.EXPAND)
         left_card.SetSizer(left_sizer)
+        return left_card
 
-        # Right column for timer and tabs
-        right_panel = wx.Panel(self)
-        right_panel.SetBackgroundColour(BACKGROUND)
-        right_sizer = wx.BoxSizer(wx.VERTICAL)
-
-        timer_card, timer_sizer = self._make_card("Focus session")
+    def _build_session_panel(self, host: wx.Window) -> wx.Panel:
+        timer_card, timer_sizer = self._make_card("Focus session", host)
         self.timer_label = wx.StaticText(timer_card, label="00:00:00", style=wx.ALIGN_CENTER_HORIZONTAL)
         font = self.timer_label.GetFont()
         font.PointSize += 10
@@ -361,13 +489,20 @@ class MainPanel(wx.Panel):
         self.reset_btn.Bind(wx.EVT_BUTTON, self.on_reset)
         timer_sizer.Add(btn_panel, 0, wx.EXPAND)
         timer_card.SetSizer(timer_sizer)
+        return timer_card
 
-        objectives_card, obj_sizer = self._make_card("Objectives & notes")
+    def _build_objectives_panel(self, host: wx.Window) -> wx.Panel:
+        objectives_card, obj_sizer = self._make_card("Objectives & notes", host)
         self.objectives = wx.TextCtrl(objectives_card, style=wx.TE_MULTILINE | wx.BORDER_NONE)
         obj_sizer.Add(self.objectives, 1, wx.EXPAND | wx.ALL, 4)
         objectives_card.SetSizer(obj_sizer)
+        return objectives_card
 
-        notebook = wx.Notebook(right_panel)
+    def _build_tabs_panel(self, host: wx.Window) -> wx.Panel:
+        panel = wx.Panel(host)
+        panel.SetBackgroundColour(BACKGROUND)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        notebook = wx.Notebook(panel)
         today_panel = wx.Panel(notebook)
         today_panel.SetBackgroundColour(SURFACE)
         today_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -387,47 +522,45 @@ class MainPanel(wx.Panel):
         notebook.AddPage(today_panel, "Today")
         notebook.AddPage(self.history_tab, "History")
         notebook.AddPage(self.stats_tab, "Statistics")
-
-        right_sizer.Add(timer_card, 0, wx.EXPAND | wx.ALL, 6)
-        right_sizer.Add(objectives_card, 1, wx.EXPAND | wx.ALL, 6)
-        right_sizer.Add(notebook, 1, wx.EXPAND | wx.ALL, 4)
-
-        right_panel.SetSizer(right_sizer)
-
-        content_sizer.Add(left_card, 1, wx.EXPAND | wx.ALL, 6)
-        content_sizer.Add(right_panel, 2, wx.EXPAND | wx.ALL, 6)
-        main_sizer.Add(content_sizer, 1, wx.EXPAND)
-        self.SetSizer(main_sizer)
+        sizer.Add(notebook, 1, wx.EXPAND | wx.ALL, 4)
+        panel.SetSizer(sizer)
+        return panel
 
     def refresh_today(self) -> None:
-        self.today_list.DeleteAllItems()
-        for entry in self.controller.get_today_entries():
-            idx = self.today_list.InsertItem(self.today_list.GetItemCount(), entry.date.isoformat())
-            activity = next((a.name for a in self.controller.list_activities() if a.id == entry.activity_id), str(entry.activity_id))
-            self.today_list.SetItem(idx, 1, activity)
-            self.today_list.SetItem(idx, 2, f"{entry.duration_hours:.2f}")
-            self.today_list.SetItem(idx, 3, f"{entry.target_hours:.2f}")
-            self.today_list.SetItem(idx, 4, f"{entry.completion_percent:.0f}%")
-            self.today_list.SetItem(idx, 5, entry.objectives_succeeded)
-            self.today_list.SetItem(idx, 6, entry.stop_reason)
-        for col in range(7):
-            self.today_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+        def action() -> None:
+            self.today_list.DeleteAllItems()
+            for entry in self.controller.get_today_entries():
+                idx = self.today_list.InsertItem(self.today_list.GetItemCount(), entry.date.isoformat())
+                activity = next((a.name for a in self.controller.list_activities() if a.id == entry.activity_id), str(entry.activity_id))
+                self.today_list.SetItem(idx, 1, activity)
+                self.today_list.SetItem(idx, 2, f"{entry.duration_hours:.2f}")
+                self.today_list.SetItem(idx, 3, f"{entry.target_hours:.2f}")
+                self.today_list.SetItem(idx, 4, f"{entry.completion_percent:.0f}%")
+                self.today_list.SetItem(idx, 5, entry.objectives_succeeded)
+                self.today_list.SetItem(idx, 6, entry.stop_reason)
+            for col in range(7):
+                self.today_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+
+        self._with_error_dialog("Loading today's entries", action)
 
     def load_activities(self) -> None:
-        activities = self.controller.list_activities()
-        today_entries = {e.activity_id: e for e in self.controller.get_today_entries()}
-        self.activity_list.DeleteAllItems()
-        for act in activities:
-            idx = self.activity_list.InsertItem(self.activity_list.GetItemCount(), act.name)
-            hours = today_entries.get(act.id).duration_hours if act.id in today_entries else 0.0
-            self.activity_list.SetItem(idx, 1, f"{hours:.2f}h")
-            self.activity_list.SetItemData(idx, act.id)
-            if self.selected_activity == act.id:
-                self.activity_list.Select(idx)
-        for col in range(2):
-            self.activity_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
-        self.history_tab.load_activities()
-        self.refresh_today()
+        def action() -> None:
+            activities = self.controller.list_activities()
+            today_entries = {e.activity_id: e for e in self.controller.get_today_entries()}
+            self.activity_list.DeleteAllItems()
+            for act in activities:
+                idx = self.activity_list.InsertItem(self.activity_list.GetItemCount(), act.name)
+                hours = today_entries.get(act.id).duration_hours if act.id in today_entries else 0.0
+                self.activity_list.SetItem(idx, 1, f"{hours:.2f}h")
+                self.activity_list.SetItemData(idx, act.id)
+                if self.selected_activity == act.id:
+                    self.activity_list.Select(idx)
+            for col in range(2):
+                self.activity_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+            self.history_tab.load_activities()
+            self.refresh_today()
+
+        self._with_error_dialog("Loading activities", action)
 
     def _require_selection(self) -> Optional[int]:
         item = self.activity_list.GetFirstSelected()
@@ -435,6 +568,30 @@ class MainPanel(wx.Panel):
             wx.MessageBox("Select an activity first", "Info")
             return None
         return self.activity_list.GetItemData(item)
+
+    def on_activity_context(self, event: wx.ContextMenuEvent) -> None:
+        pos = event.GetPosition()
+        if pos == wx.DefaultPosition:
+            pos = wx.GetMousePosition()
+        pos = self.activity_list.ScreenToClient(pos)
+        item, _flags = self.activity_list.HitTest(pos)
+        if item != wx.NOT_FOUND:
+            self.activity_list.Select(item)
+            self.selected_activity = self.activity_list.GetItemData(item)
+        menu = wx.Menu()
+        for label, handler in (
+            ("Start", self.on_start),
+            ("Pause", self.on_pause),
+            ("Stop", self.on_stop),
+            ("Reset", self.on_reset),
+            ("Edit name", self.on_edit_activity),
+            ("Delete", self.on_delete_activity),
+        ):
+            item_id = wx.NewId()
+            menu.Append(item_id, label)
+            self.Bind(wx.EVT_MENU, handler, id=item_id)
+        self.activity_list.PopupMenu(menu)
+        menu.Destroy()
 
     def on_activity_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
         self.selected_activity = event.GetData()
@@ -444,17 +601,20 @@ class MainPanel(wx.Panel):
         if self.selected_activity is None:
             self.objectives.SetValue("")
             return
-        entry = self.controller.storage.get_daily_entry(date.today(), self.selected_activity)
-        self.objectives.SetValue(entry.objectives_succeeded if entry else "")
-        if entry:
-            self.today_hours_label.SetLabel(f"Today: {entry.duration_hours:.2f} h")
-            target = entry.target_hours or self.target_input.GetValue()
-            self._update_progress(entry.duration_hours, target)
+        def action() -> None:
+            entry = self.controller.storage.get_daily_entry(date.today(), self.selected_activity)
+            self.objectives.SetValue(entry.objectives_succeeded if entry else "")
+            if entry:
+                self.today_hours_label.SetLabel(f"Today: {entry.duration_hours:.2f} h")
+                target = entry.target_hours or self.target_input.GetValue()
+                self._update_progress(entry.duration_hours, target)
+
+        self._with_error_dialog("Loading objectives", action)
 
     def on_add_activity(self, event: wx.Event) -> None:
         dlg = wx.TextEntryDialog(self, "Activity name", "Add Activity")
         if dlg.ShowModal() == wx.ID_OK:
-            self.controller.add_activity(dlg.GetValue())
+            self._with_error_dialog("Creating activity", lambda: self.controller.add_activity(dlg.GetValue()))
             self.load_activities()
         dlg.Destroy()
 
@@ -465,7 +625,7 @@ class MainPanel(wx.Panel):
         name = self.activity_list.GetItemText(self.activity_list.GetFirstSelected())
         dlg = wx.TextEntryDialog(self, "New name", "Edit Activity", value=name)
         if dlg.ShowModal() == wx.ID_OK:
-            self.controller.update_activity(activity_id, name=dlg.GetValue())
+            self._with_error_dialog("Renaming activity", lambda: self.controller.update_activity(activity_id, name=dlg.GetValue()))
             self.load_activities()
         dlg.Destroy()
 
@@ -474,7 +634,7 @@ class MainPanel(wx.Panel):
         if activity_id is None:
             return
         if wx.MessageBox("Delete selected activity?", "Confirm", style=wx.YES_NO) == wx.YES:
-            self.controller.delete_activity(activity_id)
+            self._with_error_dialog("Deleting activity", lambda: self.controller.delete_activity(activity_id))
             self.load_activities()
 
     def on_start(self, event: wx.Event) -> None:
@@ -490,12 +650,15 @@ class MainPanel(wx.Panel):
         def on_complete(elapsed: float) -> None:
             wx.CallAfter(self._handle_timer_complete, self.selected_activity, elapsed)
 
-        self.controller.start_timer(self.selected_activity, tick_cb, target_hours, on_complete)
+        self._with_error_dialog(
+            "Starting timer",
+            lambda: self.controller.start_timer(self.selected_activity, tick_cb, target_hours, on_complete),
+        )
 
     def on_pause(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
-        self.controller.pause_timer(self.selected_activity)
+        self._with_error_dialog("Pausing timer", lambda: self.controller.pause_timer(self.selected_activity))
 
     def on_stop(self, event: wx.Event) -> None:
         if self.selected_activity is None:
@@ -505,7 +668,7 @@ class MainPanel(wx.Panel):
     def on_reset(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
-        self.controller.reset_timer(self.selected_activity)
+        self._with_error_dialog("Resetting timer", lambda: self.controller.reset_timer(self.selected_activity))
         self.timer_label.SetLabel("00:00:00")
         self.progress.SetValue(0)
 
@@ -547,13 +710,19 @@ class MainPanel(wx.Panel):
             self.controller.timers.stop(activity_id)
             return
         objectives, completion_percent, stop_reason = dialog.get_values()
-        elapsed = self.controller.finalize_timer(
-            activity_id,
-            objectives,
-            target_hours,
-            completion_percent,
-            stop_reason=stop_reason,
+        result = self._with_error_dialog(
+            "Saving session",
+            lambda: self.controller.finalize_timer(
+                activity_id,
+                objectives,
+                target_hours,
+                completion_percent,
+                stop_reason=stop_reason,
+            ),
         )
+        if result is None:
+            return
+        elapsed = result
         hours = elapsed / 3600.0
         wx.MessageBox(f"Logged {hours:.2f} hours", "Saved")
         self.load_activities()
@@ -589,6 +758,8 @@ class StudyTrackerFrame(wx.Frame):
         cfg.last_window_width, cfg.last_window_height = width, height
         selection = self.main_panel.selected_activity
         self.controller.save_config(selection)
+        if self.main_panel.mgr:
+            self.main_panel.mgr.UnInit()
         event.Skip()
 
 
