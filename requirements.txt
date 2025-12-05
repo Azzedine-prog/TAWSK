@@ -1,0 +1,7 @@
+pandas
+openpyxl
+matplotlib
+PyGObject
+pyinstaller
+pytest
+flake8
