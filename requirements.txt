@@ -1,0 +1,7 @@
+pandas
+openpyxl
+matplotlib
+wxPython
+pyinstaller
+pytest
+flake8
