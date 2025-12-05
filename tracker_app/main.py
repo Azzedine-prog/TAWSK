@@ -78,11 +78,10 @@ def configure_logging() -> None:
     logging.info("Study Tracker v%s starting", __version__)
 
 
-def build_controller() -> AppController:
+def build_controller(config_manager: ConfigManager) -> AppController:
     if not all([AppController, ConfigManager, Storage, TimerManager, ExcelExporter]):
         raise RuntimeError("wx modules not loaded; call load_runtime_modules() first.")
 
-    config_manager = ConfigManager()
     storage = Storage(Path.home() / ".study_tracker" / "data.db")
     exporter = ExcelExporter(Path(config_manager.config.export_path))
     timers = TimerManager()
@@ -93,7 +92,7 @@ def main() -> None:
     load_runtime_modules()
     configure_logging()
     config_manager = ConfigManager()
-    controller = build_controller()
+    controller = build_controller(config_manager)
     app = StudyTrackerApp(controller, config_manager)
     app.run()
 

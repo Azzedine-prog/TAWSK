@@ -371,9 +371,9 @@ class StudyTrackerFrame(wx.Frame):
 
 class StudyTrackerApp(wx.App):
     def __init__(self, controller: AppController, config_manager: ConfigManager):
-        super().__init__(clearSigInt=True)
         self.controller = controller
         self.config_manager = config_manager
+        super().__init__(clearSigInt=True)
 
     def OnInit(self) -> bool:  # type: ignore[override]
         self.frame = StudyTrackerFrame(self.controller, self.config_manager)
