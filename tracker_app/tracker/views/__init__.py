@@ -1,1 +1,1 @@
-"""GTK views package."""
+"""wxPython views package."""

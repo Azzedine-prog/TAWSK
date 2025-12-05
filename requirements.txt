@@ -1,7 +1,7 @@
 pandas
 openpyxl
 matplotlib
-PyGObject
+wxPython
 pyinstaller
 pytest
 flake8

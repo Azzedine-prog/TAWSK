@@ -1,6 +1,6 @@
 # Study Tracker (TAWSK)
 
-A cross-platform GTK 4 desktop app for daily study/work tracking with timers, history, statistics, and Excel exports.
+A cross-platform wxPython desktop app for daily study/work tracking with timers, history, statistics, and Excel exports.
 
 ## Features
 - Manage activities (default AUTOSAR, TCF, CAPM, YOCTO, Resume + job posting) and add/edit/delete your own.
@@ -37,23 +37,23 @@ tests/
 
 ## Installation
 ### From source (Linux/macOS)
-1. Install GTK 4 + PyGObject system packages (e.g., `sudo apt install python3-gi gir1.2-gtk-4.0 libgtk-4-dev`).
+1. Install system GUI dependencies for wxPython (e.g., `sudo apt install libgtk-3-dev libwebkit2gtk-4.0-dev` on Debian/Ubuntu).
 2. `python3 -m venv .venv && source .venv/bin/activate`
 3. `pip install -r requirements.txt`
 4. Run with `python tracker_app/main.py`.
 
 ### Windows
-1. Install Python 3.10+ and GTK runtime (MSYS / MSYS2 recommended). Use `pacman -S mingw-w64-x86_64-python-gobject mingw-w64-x86_64-gtk4` inside the MSYS2 MinGW64 shell to satisfy PyGObject/GTK 4.
+1. Install Python 3.10+ and wxPython runtime (MSYS2 recommended). Inside the MSYS2 MinGW64 shell run `pacman -S mingw-w64-x86_64-python-wxpython mingw-w64-x86_64-gtk3`.
 2. `py -m venv .venv && .venv\\Scripts\\activate`
 3. `pip install -r requirements.txt`
-4. Run with `py tracker_app/main.py` (the app will exit early with guidance if GTK bindings are missing).
+4. Run with `py tracker_app/main.py` (the app will exit early with guidance if wxPython bindings are missing).
 
 ### Using the Windows executable
 - Download the `.exe` artifact from GitHub Actions or build via `scripts\build_windows_exe.bat`.
 - Run the generated `StudyTracker.exe` in `dist/windows/`.
 
 ### Using the Debian package
-- Install dependencies: `sudo apt install python3-gi gir1.2-gtk-4.0 libgtk-4-dev`.
+- Install dependencies: `sudo apt install libgtk-3-dev`.
 - Build: `bash scripts/build_linux_deb.sh`
 - Install: `sudo dpkg -i dist/deb/study-tracker_0.1.0_amd64.deb`
 - Launch: `study-tracker`
@@ -77,7 +77,7 @@ tests/
 GitHub Actions workflow `.github/workflows/ci_cd.yml` runs lint + pytest, builds Windows exe and Debian package, uploads artifacts, and attaches them to tagged releases (`v*`).
 
 ## Implementation Notes
-- **Timer:** Uses `GLib.timeout_add` to tick per second; elapsed seconds accumulate using `time.monotonic()` for accuracy. Stop persists the day's hours to SQLite via `Storage.upsert_daily_entry`.
-- **Statistics:** Aggregations use SQL `SUM`/`AVG` grouped by activity. The Stats view computes KPI totals and averages over the selected date range and renders a matplotlib bar chart displayed in GTK.
+- **Timer:** Uses a thread-based tick loop to update elapsed time with `time.monotonic()`; stop persists the day's hours to SQLite via `Storage.upsert_daily_entry`.
+- **Statistics:** Aggregations use SQL `SUM`/`AVG` grouped by activity. The Stats view computes KPI totals and averages over the selected date range and renders a matplotlib bar chart displayed in wxPython.
 - **Excel export dedup:** `ExcelExporter` merges existing `RawData` sheet (if present) with new data and drops duplicates on `(Date, Activity)` before writing, ensuring only one row per pair.
 - **Packaging:** PyInstaller bundles `tracker_app/main.py` into `dist/windows/StudyTracker.exe`; `build_linux_deb.sh` stages files into `build/deb/` and calls `dpkg-deb --build`, producing `dist/deb/study-tracker_<version>_amd64.deb`. CI jobs run these scripts and attach outputs to releases when tagging.

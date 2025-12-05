@@ -1,331 +1,384 @@
-"""Main window and GTK application wiring."""
+"""Main window and wxPython application wiring."""
 from __future__ import annotations
 
 import logging
+import tempfile
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Optional
 
-from gi.repository import Gio, Gtk
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import wx
+import wx.adv
 
 from tracker_app.tracker.controllers import AppController, ConfigManager
-from tracker_app.tracker.views.history_view import HistoryView
-from tracker_app.tracker.views.stats_view import StatsView
 
 LOGGER = logging.getLogger(__name__)
 
 
-class MainWindow(Gtk.ApplicationWindow):
-    def __init__(self, app: Gtk.Application, controller: AppController, config_manager: ConfigManager):
-        super().__init__(application=app)
+class HistoryPanel(wx.Panel):
+    """Tab for viewing historic entries."""
+
+    def __init__(self, parent: wx.Window, controller: AppController):
+        super().__init__(parent)
+        self.controller = controller
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        filter_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.start_picker = wx.adv.DatePickerCtrl(self)
+        self.end_picker = wx.adv.DatePickerCtrl(self)
+        filter_sizer.Add(wx.StaticText(self, label="Start"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        filter_sizer.Add(self.start_picker, 0, wx.ALL, 4)
+        filter_sizer.Add(wx.StaticText(self, label="End"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        filter_sizer.Add(self.end_picker, 0, wx.ALL, 4)
+
+        self.activity_choice = wx.Choice(self)
+        filter_sizer.Add(wx.StaticText(self, label="Activity"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        filter_sizer.Add(self.activity_choice, 0, wx.ALL, 4)
+
+        refresh_btn = wx.Button(self, label="Refresh")
+        refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
+        filter_sizer.Add(refresh_btn, 0, wx.ALL, 4)
+
+        main_sizer.Add(filter_sizer, 0, wx.EXPAND)
+
+        self.list_ctrl = wx.ListCtrl(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        for i, heading in enumerate(["Date", "Activity", "Hours", "Objectives"]):
+            self.list_ctrl.InsertColumn(i, heading)
+        main_sizer.Add(self.list_ctrl, 1, wx.EXPAND | wx.ALL, 4)
+        self.SetSizer(main_sizer)
+
+    def load_activities(self) -> None:
+        activities = self.controller.list_activities()
+        self.activity_choice.Clear()
+        self.activity_choice.Append("All", None)
+        for act in activities:
+            self.activity_choice.Append(act.name, act.id)
+        self.activity_choice.SetSelection(0)
+
+    def on_refresh(self, event: wx.Event) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        start = self.start_picker.GetValue().FormatISODate()
+        end = self.end_picker.GetValue().FormatISODate()
+        start_date = date.fromisoformat(start)
+        end_date = date.fromisoformat(end)
+        entries = self.controller.get_entries_between(start_date, end_date)
+        selected_idx = self.activity_choice.GetSelection()
+        selected_id = self.activity_choice.GetClientData(selected_idx) if selected_idx != wx.NOT_FOUND else None
+        self.list_ctrl.DeleteAllItems()
+        for entry_date, activity_name, hours, objectives in entries:
+            if selected_id and activity_name != self.activity_choice.GetString(selected_idx):
+                continue
+            idx = self.list_ctrl.InsertItem(self.list_ctrl.GetItemCount(), entry_date)
+            self.list_ctrl.SetItem(idx, 1, activity_name)
+            self.list_ctrl.SetItem(idx, 2, f"{hours:.2f}")
+            self.list_ctrl.SetItem(idx, 3, objectives)
+        for col in range(4):
+            self.list_ctrl.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+
+
+class StatsPanel(wx.Panel):
+    """Tab for aggregated statistics and chart rendering."""
+
+    def __init__(self, parent: wx.Window, controller: AppController):
+        super().__init__(parent)
+        self.controller = controller
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        range_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.range_choice = wx.Choice(self, choices=["Last 7 days", "Last 30 days", "All time"])
+        self.range_choice.SetSelection(0)
+        range_sizer.Add(wx.StaticText(self, label="Range"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        range_sizer.Add(self.range_choice, 0, wx.ALL, 4)
+        refresh_btn = wx.Button(self, label="Refresh")
+        refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
+        range_sizer.Add(refresh_btn, 0, wx.ALL, 4)
+        export_btn = wx.Button(self, label="Export Excel")
+        export_btn.Bind(wx.EVT_BUTTON, self.on_export)
+        range_sizer.Add(export_btn, 0, wx.ALL, 4)
+        main_sizer.Add(range_sizer, 0, wx.EXPAND)
+
+        self.kpi_text = wx.StaticText(self, label="")
+        main_sizer.Add(self.kpi_text, 0, wx.ALL, 6)
+
+        self.chart_bitmap = wx.StaticBitmap(self)
+        main_sizer.Add(self.chart_bitmap, 1, wx.EXPAND | wx.ALL, 6)
+
+        self.SetSizer(main_sizer)
+
+    def _date_range(self):
+        today = date.today()
+        sel = self.range_choice.GetSelection()
+        if sel == 0:
+            return today - timedelta(days=6), today
+        if sel == 1:
+            return today - timedelta(days=29), today
+        return date.min, today
+
+    def on_refresh(self, event: wx.Event) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        start, end = self._date_range()
+        stats = self.controller.get_stats(start, end)
+        if not stats:
+            self.kpi_text.SetLabel("No data in selected range.")
+            self.chart_bitmap.SetBitmap(wx.NullBitmap)
+            return
+        total_hours = sum(s.total_hours for s in stats)
+        days = (end - start).days + 1
+        avg_hours = total_hours / days if days else 0
+        top = sorted(stats, key=lambda s: s.total_hours, reverse=True)[:3]
+        top_str = ", ".join(f"{s.activity_name} ({s.total_hours:.1f}h)" for s in top)
+        self.kpi_text.SetLabel(
+            f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\nTop activities: {top_str}"
+        )
+
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color="#2563eb")
+        ax.set_ylabel("Hours")
+        ax.set_xlabel("Activity")
+        ax.set_title("Hours by activity")
+        fig.autofmt_xdate(rotation=30)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            fig.savefig(tmp.name, bbox_inches="tight")
+            bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
+            self.chart_bitmap.SetBitmap(bitmap)
+        plt.close(fig)
+
+    def on_export(self, event: wx.Event) -> None:
+        start, end = self._date_range()
+        path = self.controller.export_to_excel(start, end)
+        wx.MessageBox(f"Exported statistics to {path}", "Export complete")
+
+
+class MainPanel(wx.Panel):
+    def __init__(self, parent: wx.Window, controller: AppController, config_manager: ConfigManager):
+        super().__init__(parent)
         self.controller = controller
         self.config_manager = config_manager
-        self.set_title("Study Tracker")
-        self.set_default_size(config_manager.config.last_window_width, config_manager.config.last_window_height)
-        self.set_resizable(True)
-        self.set_margin_top(10)
-        self.set_margin_bottom(10)
-        self.set_margin_start(10)
-        self.set_margin_end(10)
-        self._load_css()
-        self.add_css_class("app-window")
-
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
         self._build_ui()
-        self._load_activities()
+        self.load_activities()
 
-    # UI setup
     def _build_ui(self) -> None:
-        header = Gtk.HeaderBar()
-        header_label = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        title = Gtk.Label(label="Daily Study Tracker")
-        subtitle = Gtk.Label(label="Track time with Microsoft-inspired polish")
-        title.set_xalign(0)
-        subtitle.set_xalign(0)
-        subtitle.add_css_class("subdued")
-        header_label.append(title)
-        header_label.append(subtitle)
-        header.set_title_widget(header_label)
+        main_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        export_btn = Gtk.Button.new_with_label("Export")
-        export_btn.set_icon_name("document-save-symbolic")
-        export_btn.set_tooltip_text("Export statistics to Excel (Ctrl+E)")
-        export_btn.add_css_class("accent-button")
-        export_btn.connect("clicked", self.on_export_clicked)
-        header.pack_end(export_btn)
-        header.add_css_class("header-accent")
-        self.set_titlebar(header)
+        # Left column for activities
+        left_panel = wx.Panel(self)
+        left_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.activity_list = wx.ListCtrl(left_panel, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        self.activity_list.InsertColumn(0, "Activity")
+        self.activity_list.InsertColumn(1, "Today")
+        self.activity_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_activity_selected)
+        left_sizer.Add(self.activity_list, 1, wx.EXPAND | wx.ALL, 4)
 
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        self.set_child(main_box)
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        add_btn = wx.Button(left_panel, label="Add")
+        edit_btn = wx.Button(left_panel, label="Edit")
+        del_btn = wx.Button(left_panel, label="Delete")
+        add_btn.Bind(wx.EVT_BUTTON, self.on_add_activity)
+        edit_btn.Bind(wx.EVT_BUTTON, self.on_edit_activity)
+        del_btn.Bind(wx.EVT_BUTTON, self.on_delete_activity)
+        for btn in (add_btn, edit_btn, del_btn):
+            btn_sizer.Add(btn, 1, wx.ALL, 4)
+        left_sizer.Add(btn_sizer, 0, wx.EXPAND)
+        left_panel.SetSizer(left_sizer)
 
-        # Left panel activities
-        left_frame = Gtk.Frame()
-        left_frame.add_css_class("card")
-        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        left_frame.set_child(left_box)
-        main_box.append(left_frame)
+        # Right column for timer and tabs
+        right_panel = wx.Panel(self)
+        right_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        activities_header = Gtk.Label(label="Activities", xalign=0)
-        activities_header.add_css_class("section-title")
-        left_box.append(activities_header)
+        self.timer_label = wx.StaticText(right_panel, label="00:00:00", style=wx.ALIGN_CENTER_HORIZONTAL)
+        font = self.timer_label.GetFont()
+        font.PointSize += 10
+        font = font.Bold()
+        self.timer_label.SetFont(font)
+        right_sizer.Add(self.timer_label, 0, wx.EXPAND | wx.ALL, 6)
 
-        self.activity_list = Gtk.ListBox()
-        self.activity_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.activity_list.connect("row-selected", self.on_activity_selected)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_child(self.activity_list)
-        scroll.add_css_class("list-surface")
-        left_box.append(scroll)
+        today_box = wx.BoxSizer(wx.HORIZONTAL)
+        self.today_hours_label = wx.StaticText(right_panel, label="Today: 0.0 h")
+        today_box.Add(self.today_hours_label, 0, wx.ALL, 4)
+        right_sizer.Add(today_box, 0, wx.ALL, 2)
 
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        btn_box.add_css_class("command-bar")
-        add_btn = Gtk.Button.new_with_label("Add")
-        add_btn.set_icon_name("list-add-symbolic")
-        add_btn.connect("clicked", self.on_add_activity)
-        edit_btn = Gtk.Button.new_with_label("Edit")
-        edit_btn.set_icon_name("document-edit-symbolic")
-        edit_btn.connect("clicked", self.on_edit_activity)
-        del_btn = Gtk.Button.new_with_label("Delete")
-        del_btn.set_icon_name("user-trash-symbolic")
-        del_btn.connect("clicked", self.on_delete_activity)
-        btn_box.append(add_btn)
-        btn_box.append(edit_btn)
-        btn_box.append(del_btn)
-        left_box.append(btn_box)
+        btn_panel = wx.BoxSizer(wx.HORIZONTAL)
+        self.start_btn = wx.Button(right_panel, label="Start")
+        self.pause_btn = wx.Button(right_panel, label="Pause")
+        self.stop_btn = wx.Button(right_panel, label="Stop")
+        self.reset_btn = wx.Button(right_panel, label="Reset")
+        for btn in (self.start_btn, self.pause_btn, self.stop_btn, self.reset_btn):
+            btn_panel.Add(btn, 1, wx.ALL, 4)
+        self.start_btn.Bind(wx.EVT_BUTTON, self.on_start)
+        self.pause_btn.Bind(wx.EVT_BUTTON, self.on_pause)
+        self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
+        self.reset_btn.Bind(wx.EVT_BUTTON, self.on_reset)
+        right_sizer.Add(btn_panel, 0, wx.EXPAND)
 
-        # Center panel timer
-        center_frame = Gtk.Frame()
-        center_frame.add_css_class("card")
-        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        center_frame.set_child(center_box)
-        main_box.append(center_frame)
+        self.objectives = wx.TextCtrl(right_panel, style=wx.TE_MULTILINE)
+        right_sizer.Add(wx.StaticText(right_panel, label="Objectives succeeded"), 0, wx.ALL, 4)
+        right_sizer.Add(self.objectives, 0, wx.EXPAND | wx.ALL, 4)
 
-        self.timer_label = Gtk.Label(label="00:00:00")
-        self.timer_label.set_margin_top(4)
-        self.timer_label.add_css_class("timer-display")
-        center_box.append(self.timer_label)
-        self.today_total_label = Gtk.Label(label="Today: 0 h")
-        self.today_total_label.add_css_class("subdued")
-        center_box.append(self.today_total_label)
+        notebook = wx.Notebook(right_panel)
+        today_panel = wx.Panel(notebook)
+        today_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.today_list = wx.ListCtrl(today_panel, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        for i, heading in enumerate(["Date", "Activity", "Hours", "Objectives"]):
+            self.today_list.InsertColumn(i, heading)
+        refresh_today = wx.Button(today_panel, label="Refresh Today")
+        refresh_today.Bind(wx.EVT_BUTTON, lambda evt: self.refresh_today())
+        today_sizer.Add(refresh_today, 0, wx.ALL, 4)
+        today_sizer.Add(self.today_list, 1, wx.EXPAND | wx.ALL, 4)
+        today_panel.SetSizer(today_sizer)
 
-        timer_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        timer_btn_box.add_css_class("command-bar")
-        start_btn = Gtk.Button.new_with_label("Start")
-        start_btn.set_icon_name("media-playback-start-symbolic")
-        start_btn.add_css_class("accent-button")
-        start_btn.connect("clicked", self.on_start_timer)
-        pause_btn = Gtk.Button.new_with_label("Pause")
-        pause_btn.set_icon_name("media-playback-pause-symbolic")
-        pause_btn.connect("clicked", self.on_pause_timer)
-        stop_btn = Gtk.Button.new_with_label("Stop")
-        stop_btn.set_icon_name("media-playback-stop-symbolic")
-        stop_btn.connect("clicked", self.on_stop_timer)
-        reset_btn = Gtk.Button.new_with_label("Reset")
-        reset_btn.set_icon_name("view-refresh-symbolic")
-        reset_btn.connect("clicked", self.on_reset_timer)
-        for btn in (start_btn, pause_btn, stop_btn, reset_btn):
-            timer_btn_box.append(btn)
-        center_box.append(timer_btn_box)
+        self.history_tab = HistoryPanel(notebook, self.controller)
+        self.stats_tab = StatsPanel(notebook, self.controller)
+        notebook.AddPage(today_panel, "Today")
+        notebook.AddPage(self.history_tab, "History")
+        notebook.AddPage(self.stats_tab, "Statistics")
+        right_sizer.Add(notebook, 1, wx.EXPAND | wx.ALL, 4)
 
-        objectives_label = Gtk.Label(label="Objectives succeeded", xalign=0)
-        objectives_label.add_css_class("section-title")
-        center_box.append(objectives_label)
-        self.objectives_buffer = Gtk.TextBuffer()
-        self.objectives_view = Gtk.TextView.new_with_buffer(self.objectives_buffer)
-        self.objectives_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.objectives_view.add_css_class("text-panel")
-        objectives_scroll = Gtk.ScrolledWindow()
-        objectives_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        objectives_scroll.set_child(self.objectives_view)
-        center_box.append(objectives_scroll)
+        right_panel.SetSizer(right_sizer)
 
-        # Tabs right/bottom
-        notebook = Gtk.Notebook()
-        notebook.set_tab_pos(Gtk.PositionType.BOTTOM)
-        notebook.add_css_class("card")
-        main_box.append(notebook)
+        main_sizer.Add(left_panel, 1, wx.EXPAND | wx.ALL, 6)
+        main_sizer.Add(right_panel, 2, wx.EXPAND | wx.ALL, 6)
+        self.SetSizer(main_sizer)
 
-        self.history_view = HistoryView(self.controller)
-        notebook.append_page(self.history_view, Gtk.Label(label="History"))
+    def refresh_today(self) -> None:
+        self.today_list.DeleteAllItems()
+        for entry in self.controller.get_today_entries():
+            idx = self.today_list.InsertItem(self.today_list.GetItemCount(), entry.date.isoformat())
+            activity = next((a.name for a in self.controller.list_activities() if a.id == entry.activity_id), str(entry.activity_id))
+            self.today_list.SetItem(idx, 1, activity)
+            self.today_list.SetItem(idx, 2, f"{entry.duration_hours:.2f}")
+            self.today_list.SetItem(idx, 3, entry.objectives_succeeded)
+        for col in range(4):
+            self.today_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
 
-        self.stats_view = StatsView(self.controller)
-        notebook.append_page(self.stats_view, Gtk.Label(label="Statistics"))
-
-    def _load_css(self) -> None:
-        style_paths = [
-            Path(__file__).resolve().parents[3] / "resources" / "ui" / "style.css",
-            Path(__file__).resolve().parents[2] / "resources" / "ui" / "style.css",
-        ]
-        for path in style_paths:
-            if path.exists():
-                provider = Gtk.CssProvider()
-                provider.load_from_path(str(path))
-                display = self.get_display() or Gtk.Display.get_default()
-                Gtk.StyleContext.add_provider_for_display(
-                    display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                )
-                break
-
-    # Activity handling
-    def _load_activities(self) -> None:
-        self.activity_list.remove_all()
+    def load_activities(self) -> None:
         activities = self.controller.list_activities()
-        if not activities:
-            for default in ["AUTOSAR", "TCF", "CAPM", "YOCTO", "Resume + job posting"]:
-                activity = self.controller.add_activity(default)
-                activities.append(activity)
-        selected_row_index = 0
-        for idx, activity in enumerate(activities):
-            row = Gtk.ListBoxRow()
-            row.set_data("activity_id", activity.id)
-            row.set_child(Gtk.Label(label=activity.name, xalign=0))
-            self.activity_list.append(row)
-            if activity.id == self.selected_activity:
-                selected_row_index = idx
-        self.activity_list.show()
-        self.activity_list.select_row(self.activity_list.get_row_at_index(selected_row_index))
+        today_entries = {e.activity_id: e for e in self.controller.get_today_entries()}
+        self.activity_list.DeleteAllItems()
+        for act in activities:
+            idx = self.activity_list.InsertItem(self.activity_list.GetItemCount(), act.name)
+            hours = today_entries.get(act.id).duration_hours if act.id in today_entries else 0.0
+            self.activity_list.SetItem(idx, 1, f"{hours:.2f}h")
+            self.activity_list.SetItemData(idx, act.id)
+            if self.selected_activity == act.id:
+                self.activity_list.Select(idx)
+        for col in range(2):
+            self.activity_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+        self.history_tab.load_activities()
+        self.refresh_today()
 
-    def on_activity_selected(self, listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
-        if not row:
-            return
-        activity_id = row.get_data("activity_id")
-        self.selected_activity = activity_id
-        self.config_manager.config.last_selected_activity = activity_id
-        self._refresh_today_total()
-        self.timer_label.set_text(self.controller.get_timer_display(activity_id))
+    def _require_selection(self) -> Optional[int]:
+        item = self.activity_list.GetFirstSelected()
+        if item == -1:
+            wx.MessageBox("Select an activity first", "Info")
+            return None
+        return self.activity_list.GetItemData(item)
 
-    def _refresh_today_total(self) -> None:
+    def on_activity_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
+        self.selected_activity = event.GetData()
+        self._load_objectives()
+
+    def _load_objectives(self) -> None:
         if self.selected_activity is None:
+            self.objectives.SetValue("")
             return
-        entries = self.controller.get_today_entries()
-        total = 0.0
-        text = ""
-        for entry in entries:
-            if entry.activity_id == self.selected_activity:
-                total = entry.duration_hours
-                text = entry.objectives_succeeded
-        self.today_total_label.set_text(f"Today: {total:.2f} h")
-        self.objectives_buffer.set_text(text)
+        entry = self.controller.storage.get_daily_entry(date.today(), self.selected_activity)
+        self.objectives.SetValue(entry.objectives_succeeded if entry else "")
+        if entry:
+            self.today_hours_label.SetLabel(f"Today: {entry.duration_hours:.2f} h")
 
-    def on_add_activity(self, _button) -> None:
-        dialog = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.OK_CANCEL, text="New activity name")
-        entry = Gtk.Entry()
-        entry.set_placeholder_text("Activity name")
-        dialog.set_extra_child(entry)
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK and entry.get_text():
-            self.controller.add_activity(entry.get_text())
-            self._load_activities()
-        dialog.destroy()
+    def on_add_activity(self, event: wx.Event) -> None:
+        dlg = wx.TextEntryDialog(self, "Activity name", "Add Activity")
+        if dlg.ShowModal() == wx.ID_OK:
+            self.controller.add_activity(dlg.GetValue())
+            self.load_activities()
+        dlg.Destroy()
 
-    def on_edit_activity(self, _button) -> None:
-        row = self.activity_list.get_selected_row()
-        if not row:
+    def on_edit_activity(self, event: wx.Event) -> None:
+        activity_id = self._require_selection()
+        if activity_id is None:
             return
-        activity_id = row.get_data("activity_id")
-        dialog = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.OK_CANCEL, text="Edit activity name")
-        entry = Gtk.Entry()
-        entry.set_text(row.get_child().get_text())
-        dialog.set_extra_child(entry)
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK and entry.get_text():
-            self.controller.update_activity(activity_id, name=entry.get_text())
-            self._load_activities()
-        dialog.destroy()
+        name = self.activity_list.GetItemText(self.activity_list.GetFirstSelected())
+        dlg = wx.TextEntryDialog(self, "New name", "Edit Activity", value=name)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.controller.update_activity(activity_id, name=dlg.GetValue())
+            self.load_activities()
+        dlg.Destroy()
 
-    def on_delete_activity(self, _button) -> None:
-        row = self.activity_list.get_selected_row()
-        if not row:
+    def on_delete_activity(self, event: wx.Event) -> None:
+        activity_id = self._require_selection()
+        if activity_id is None:
             return
-        activity_id = row.get_data("activity_id")
-        dialog = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.OK_CANCEL, text="Delete this activity?")
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
+        if wx.MessageBox("Delete selected activity?", "Confirm", style=wx.YES_NO) == wx.YES:
             self.controller.delete_activity(activity_id)
-            self._load_activities()
-        dialog.destroy()
+            self.load_activities()
 
-    # Timer callbacks
-    def on_start_timer(self, _button) -> None:
+    def on_start(self, event: wx.Event) -> None:
         if self.selected_activity is None:
+            wx.MessageBox("Select an activity first", "Info")
             return
-        self.controller.start_timer(self.selected_activity, self._on_tick)
+        self.controller.start_timer(self.selected_activity, lambda e: wx.CallAfter(self.timer_label.SetLabel, self.controller.timers.ensure_timer(self.selected_activity).formatted))
 
-    def on_pause_timer(self, _button) -> None:
+    def on_pause(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
         self.controller.pause_timer(self.selected_activity)
-        self._refresh_today_total()
 
-    def on_stop_timer(self, _button) -> None:
+    def on_stop(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
-        objectives = self.objectives_buffer.get_text(self.objectives_buffer.get_start_iter(), self.objectives_buffer.get_end_iter(), True)
-        self.controller.stop_timer(self.selected_activity, objectives)
-        self._refresh_today_total()
+        objectives = self.objectives.GetValue()
+        elapsed = self.controller.stop_timer(self.selected_activity, objectives)
+        hours = elapsed / 3600.0
+        wx.MessageBox(f"Logged {hours:.2f} hours", "Saved")
+        self.load_activities()
+        self._load_objectives()
 
-    def on_reset_timer(self, _button) -> None:
+    def on_reset(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
         self.controller.reset_timer(self.selected_activity)
-        self.timer_label.set_text("00:00:00")
-
-    def _on_tick(self, elapsed_seconds: float) -> None:
-        if self.selected_activity is None:
-            return
-        self.timer_label.set_text(self.controller.get_timer_display(self.selected_activity))
-
-    def on_export_clicked(self, _button) -> None:
-        cfg = self.config_manager.config
-        end_date = date.today()
-        start_date = end_date - timedelta(days=cfg.default_range_days)
-        try:
-            path = self.controller.export_to_excel(start_date, end_date)
-            dialog = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.OK, text=f"Exported to {path}")
-            dialog.run()
-            dialog.destroy()
-        except Exception as exc:  # pragma: no cover - GUI dialog only
-            LOGGER.exception("Export failed")
-            dialog = Gtk.MessageDialog(transient_for=self, modal=True, buttons=Gtk.ButtonsType.OK, text=f"Export failed: {exc}")
-            dialog.run()
-            dialog.destroy()
-
-    def save_state(self) -> None:
-        self.config_manager.save_config(self.selected_activity)
+        self.timer_label.SetLabel("00:00:00")
 
 
-class StudyTrackerApp(Gtk.Application):
+class StudyTrackerFrame(wx.Frame):
     def __init__(self, controller: AppController, config_manager: ConfigManager):
-        super().__init__(application_id="com.example.studytracker", flags=Gio.ApplicationFlags.FLAGS_NONE)
+        super().__init__(None, title="Study Tracker", size=(config_manager.config.last_window_width, config_manager.config.last_window_height))
         self.controller = controller
         self.config_manager = config_manager
-        self.window: Optional[MainWindow] = None
+        self.main_panel = MainPanel(self, controller, config_manager)
+        self.Bind(wx.EVT_CLOSE, self.on_close)
 
-    def do_startup(self) -> None:  # type: ignore[override]
-        Gtk.Application.do_startup(self)
-        # Accelerators
-        export_action = Gio.SimpleAction.new("export", None)
-        export_action.connect("activate", self._on_export_action)
-        self.add_action(export_action)
-        self.set_accels_for_action("app.export", ["<Primary>e"])
+    def on_close(self, event: wx.CloseEvent) -> None:  # type: ignore[override]
+        cfg = self.config_manager.config
+        width, height = self.GetSize()
+        cfg.last_window_width, cfg.last_window_height = width, height
+        selection = self.main_panel.selected_activity
+        self.controller.save_config(selection)
+        event.Skip()
 
-        quit_action = Gio.SimpleAction.new("quit", None)
-        quit_action.connect("activate", lambda *_: self.quit())
-        self.add_action(quit_action)
-        self.set_accels_for_action("app.quit", ["<Primary>q"])
 
-    def do_activate(self) -> None:  # type: ignore[override]
-        if not self.window:
-            self.window = MainWindow(self, self.controller, self.config_manager)
-        self.window.present()
+class StudyTrackerApp(wx.App):
+    def __init__(self, controller: AppController, config_manager: ConfigManager):
+        super().__init__(clearSigInt=True)
+        self.controller = controller
+        self.config_manager = config_manager
 
-    def _on_export_action(self, _action, _param) -> None:
-        if self.window:
-            self.window.on_export_clicked(None)
+    def OnInit(self) -> bool:  # type: ignore[override]
+        self.frame = StudyTrackerFrame(self.controller, self.config_manager)
+        self.frame.Show()
+        return True
 
-    def do_shutdown(self) -> None:  # type: ignore[override]
-        if self.window:
-            self.window.save_state()
-        Gtk.Application.do_shutdown(self)
+    def run(self) -> None:
+        self.MainLoop()

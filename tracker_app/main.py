@@ -1,4 +1,4 @@
-"""Application entry point for Study Tracker."""
+"""Application entry point for Study Tracker (wxPython edition)."""
 from __future__ import annotations
 
 import importlib.util
@@ -33,25 +33,25 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "app.log"
 
 
-def ensure_gtk_dependencies() -> None:
-    """Exit early with a clear message when GTK bindings are missing."""
+def ensure_wx_dependencies() -> None:
+    """Exit early with a clear message when wxPython bindings are missing."""
 
     def _missing_message() -> str:
         return (
-            "GTK runtime is missing. Install PyGObject/GTK 4 first (e.g., "
-            "`sudo apt install python3-gi gir1.2-gtk-4.0 libgtk-4-dev` on Debian/Ubuntu "
-            "or MSYS2 packages `mingw-w64-x86_64-python-gobject` and `mingw-w64-x86_64-gtk4` on Windows).\n"
+            "wxPython runtime is missing. Install wxPython (pip install wxPython) and ensure system "
+            "GTK3 or native widgets are available. On Debian/Ubuntu, you may need `libgtk-3-dev` and "
+            "related dependencies.\n"
         )
 
-    if importlib.util.find_spec("gi") is None or importlib.util.find_spec("gi.repository.Gtk") is None:
+    if importlib.util.find_spec("wx") is None:
         sys.stderr.write(_missing_message())
         sys.exit(1)
 
 
 def load_runtime_modules() -> None:
-    """Load GTK-dependent modules after dependency checks."""
+    """Load wx-dependent modules after dependency checks."""
 
-    ensure_gtk_dependencies()
+    ensure_wx_dependencies()
 
     global AppController, ConfigManager, Storage, TimerManager, ExcelExporter, StudyTrackerApp
     from tracker_app.tracker.controllers import AppController as _AppController, ConfigManager as _ConfigManager
@@ -80,7 +80,7 @@ def configure_logging() -> None:
 
 def build_controller() -> AppController:
     if not all([AppController, ConfigManager, Storage, TimerManager, ExcelExporter]):
-        raise RuntimeError("GTK modules not loaded; call load_runtime_modules() first.")
+        raise RuntimeError("wx modules not loaded; call load_runtime_modules() first.")
 
     config_manager = ConfigManager()
     storage = Storage(Path.home() / ".study_tracker" / "data.db")
