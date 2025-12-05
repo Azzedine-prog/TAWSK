@@ -43,10 +43,10 @@ tests/
 4. Run with `python tracker_app/main.py`.
 
 ### Windows
-1. Install Python 3.10+ and GTK runtime (MSYS / MSYS2 recommended).
+1. Install Python 3.10+ and GTK runtime (MSYS / MSYS2 recommended). Use `pacman -S mingw-w64-x86_64-python-gobject mingw-w64-x86_64-gtk4` inside the MSYS2 MinGW64 shell to satisfy PyGObject/GTK 4.
 2. `py -m venv .venv && .venv\\Scripts\\activate`
 3. `pip install -r requirements.txt`
-4. Run with `py tracker_app/main.py`.
+4. Run with `py tracker_app/main.py` (the app will exit early with guidance if GTK bindings are missing).
 
 ### Using the Windows executable
 - Download the `.exe` artifact from GitHub Actions or build via `scripts\build_windows_exe.bat`.
