@@ -753,22 +753,79 @@ class MainPanel(wx.ScrolledWindow):
         ribbon.SetToolBitmapSize((24, 24))
         ribbon.SetToolSeparation(6)
 
+        def add_label(text: str) -> None:
+            lbl = wx.StaticText(ribbon, label=text)
+            font = lbl.GetFont()
+            font.MakeBold()
+            lbl.SetFont(font)
+            ribbon.AddControl(lbl)
+            ribbon.AddSeparator()
+
         def add_tool(label: str, art: str, handler, help_str: str) -> None:
-            tool_id = wx.NewIdRef()
+            tool_id = wx.NewId()
             bitmap = wx.ArtProvider.GetBitmap(art, wx.ART_TOOLBAR, (24, 24))
-            ribbon.AddTool(tool_id, label, bitmap, help=help_str)
+            ribbon.AddTool(tool_id, label, bitmap, shortHelp=help_str)
             self.Bind(wx.EVT_TOOL, handler, id=tool_id)
 
+        add_label("Home")
         add_tool("Activities", wx.ART_LIST_VIEW, lambda evt: self._show_pane("activities", dock=True), "Show the activities pane")
         add_tool("Timer", wx.ART_REPORT_VIEW, lambda evt: self._show_pane("session", dock=True), "Show the focus timer")
         add_tool("Insights", wx.ART_NORMAL_FILE, lambda evt: self._show_pane("insights", dock=True), "Open Today/History/Stats tab")
         add_tool("Objectives", wx.ART_TIP, lambda evt: self._show_pane("objectives", floatable=True), "Open objectives & notes")
         add_tool("Charts", wx.ART_FIND, lambda evt: self._show_pane("stats_charts", floatable=True), "Show floating charts")
-        add_tool("Guide", wx.ART_HELP, lambda evt: self._show_pane("guide", floatable=True), "Open help & motivation")
+        add_tool("Daily summary", wx.ART_INFORMATION, self._show_daily_summary, "Quick daily recap dialog")
+        add_tool("Weekly overview", wx.ART_QUESTION, self._show_weekly_overview, "Weekly dashboard snapshot")
+        add_tool("Quick search", wx.ART_FIND, self._not_implemented_search, "Search tasks and notes")
+        add_tool("Sync", wx.ART_EXECUTABLE_FILE, self._not_implemented_sync, "Sync data across devices")
+
+        add_label("Tasks")
+        add_tool("New task", wx.ART_NEW, self.on_add_activity, "Add a new task/activity")
+        add_tool("Edit", wx.ART_EDIT, self.on_edit_activity, "Edit selected task")
+        add_tool("Delete", wx.ART_DELETE, self.on_delete_activity, "Remove selected task")
+        add_tool("Complete", wx.ART_TICK_MARK, self.on_mark_complete_from_ribbon, "Mark selected task complete")
+        add_tool("Reopen", wx.ART_UNDO, self.on_reopen_task_from_ribbon, "Reopen completed task")
+        add_tool("Duplicate", wx.ART_COPY, self._not_implemented_duplicate, "Clone selected task")
+        add_tool("Tags", wx.ART_LIST_VIEW, self._not_implemented_tags, "Assign tags and categories")
+
+        add_label("Time tracking")
+        add_tool("Start", wx.ART_GO_FORWARD, self.on_start, "Start timer for selected task")
+        add_tool("Pause", wx.ART_CROSS_MARK, self.on_pause, "Pause timer")
+        add_tool("Stop", wx.ART_QUIT, self.on_stop, "Stop timer and log")
+        add_tool("Manual", wx.ART_PLUS, self._not_implemented_manual_time, "Add manual time entry")
+        add_tool("Break", wx.ART_MINUS, self._not_implemented_break, "Log a break or interruption")
+        add_tool("Pomodoro", wx.ART_GO_DIR_UP, self._not_implemented_pomodoro, "Start Pomodoro focus mode")
+
+        add_label("Analytics")
+        add_tool("KPIs", wx.ART_REPORT_VIEW, lambda evt: self._show_pane("stats_charts", floatable=True), "Open KPI dashboard")
+        add_tool("Weekly report", wx.ART_LIST_VIEW, self._not_implemented_weekly_report, "Generate weekly report")
+        add_tool("Monthly report", wx.ART_NORMAL_FILE, self._not_implemented_monthly_report, "Generate monthly report")
         add_tool("Export", wx.ART_FILE_SAVE, self._ribbon_export, "Export Excel report for the active range")
-        add_tool("AI plan", wx.ART_EXECUTABLE_FILE, self._handle_ai_assist, "Ask AI to plan and prioritize")
-        add_tool("Task window", wx.ART_GO_FORWARD, self._open_task_window_from_ribbon, "Pop out the selected task as its own window")
+        add_tool("Custom report", wx.ART_FIND_AND_REPLACE, self._not_implemented_custom_report, "Build a custom analytics view")
+
+        add_label("Planning")
+        add_tool("Daily plan", wx.ART_GO_HOME, self._handle_ai_assist, "AI daily plan & priority")
+        add_tool("Weekly plan", wx.ART_GO_DIR_UP, self._not_implemented_weekly_plan, "Plan the next 7 days")
+        add_tool("Goals", wx.ART_TIP, self._not_implemented_goals, "Set daily/weekly goals")
+        add_tool("Calendar", wx.ART_HELP_BOOK, self._not_implemented_calendar, "Show calendar view")
+
+        add_label("Tools")
+        add_tool("Import", wx.ART_FILE_OPEN, self._not_implemented_import, "Import tasks from CSV/JSON")
+        add_tool("Export tasks", wx.ART_FILE_SAVE_AS, self._not_implemented_export_tasks, "Export task list")
+        add_tool("Backup", wx.ART_HARDDISK, self._not_implemented_backup, "Backup database")
         add_tool("Restore", wx.ART_UNDO, self._restore_layout, "Show any hidden panes")
+        add_tool("Templates", wx.ART_TIP, self._not_implemented_templates, "Task templates library")
+
+        add_label("Settings")
+        add_tool("Theme", wx.ART_HELP_SETTINGS, self._not_implemented_theme, "Theme and color settings")
+        add_tool("Notifications", wx.ART_TIP, self._not_implemented_notifications, "Reminder preferences")
+        add_tool("Shortcuts", wx.ART_TICK_MARK, self._not_implemented_shortcuts, "Keyboard shortcuts guide")
+
+        add_label("Help")
+        add_tool("Docs", wx.ART_HELP_BOOK, self._show_help, "Open documentation")
+        add_tool("Shortcuts", wx.ART_REPORT_VIEW, self._not_implemented_shortcuts, "Keyboard shortcuts reference")
+        add_tool("Updates", wx.ART_GO_DOWN, self._not_implemented_updates, "Check for updates")
+        add_tool("Feedback", wx.ART_TIP, self._not_implemented_feedback, "Send feedback or bug report")
+
         ribbon.Realize()
         return ribbon
 
@@ -1035,6 +1092,112 @@ class MainPanel(wx.ScrolledWindow):
                 "Export error",
                 style=wx.ICON_ERROR,
             )
+
+    def _show_daily_summary(self, event: wx.CommandEvent) -> None:
+        activities = {a.id: a.name for a in self.controller.list_activities()}
+        entries = self.controller.storage.get_daily_entries_by_date(date.today())
+        if not entries:
+            wx.MessageBox("No entries logged yet today.", "Daily summary")
+            return
+        lines = [
+            f"{activities.get(e.activity_id, 'Unknown')}: {e.duration_hours:.2f}h / {(e.target_hours or 0):.2f}h"
+            for e in entries
+        ]
+        wx.MessageBox("\n".join(lines), "Daily summary")
+
+    def _show_weekly_overview(self, event: wx.CommandEvent) -> None:
+        start = date.today() - timedelta(days=6)
+        entries = self.controller.storage.get_entries_between(start, date.today())
+        if not entries:
+            wx.MessageBox("No data for the last week yet.", "Weekly overview")
+            return
+        by_day: Dict[date, float] = {}
+        for entry in entries:
+            by_day.setdefault(entry.date, 0.0)
+            by_day[entry.date] += entry.duration_hours
+        lines = [f"{d.isoformat()}: {hours:.2f}h" for d, hours in sorted(by_day.items())]
+        wx.MessageBox("\n".join(lines), "Weekly overview")
+
+    def _not_implemented(self, title: str) -> None:
+        wx.MessageBox("Coming soon in a future update.", title)
+
+    def _not_implemented_search(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Quick search")
+
+    def _not_implemented_sync(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Sync")
+
+    def _not_implemented_duplicate(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Duplicate task")
+
+    def _not_implemented_tags(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Tags")
+
+    def _not_implemented_manual_time(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Manual time entry")
+
+    def _not_implemented_break(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Break tracking")
+
+    def _not_implemented_pomodoro(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Pomodoro mode")
+
+    def _not_implemented_weekly_report(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Weekly report")
+
+    def _not_implemented_monthly_report(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Monthly report")
+
+    def _not_implemented_custom_report(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Custom report")
+
+    def _not_implemented_weekly_plan(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Weekly plan")
+
+    def _not_implemented_goals(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Goals")
+
+    def _not_implemented_calendar(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Calendar")
+
+    def _not_implemented_import(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Import")
+
+    def _not_implemented_export_tasks(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Export tasks")
+
+    def _not_implemented_backup(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Backup")
+
+    def _not_implemented_templates(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Templates")
+
+    def _not_implemented_theme(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Theme")
+
+    def _not_implemented_notifications(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Notifications")
+
+    def _not_implemented_shortcuts(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Shortcuts")
+
+    def _not_implemented_updates(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Updates")
+
+    def _not_implemented_feedback(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Feedback")
+
+    def _not_implemented_weekly_overview(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Overview")
+
+    def _not_implemented_custom(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Action")
+
+    def on_mark_complete_from_ribbon(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Mark complete")
+
+    def on_reopen_task_from_ribbon(self, event: wx.CommandEvent) -> None:
+        self._not_implemented("Reopen task")
 
     def _open_task_window_from_ribbon(self, event: wx.CommandEvent) -> None:
         self.on_open_task_window(event)
