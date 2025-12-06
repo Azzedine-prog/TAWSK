@@ -9,7 +9,8 @@ A cross-platform wxPython desktop app for daily study/work tracking with timers,
 - History filtering by date range and activity with target, completion %, and stop-reason columns.
 - Statistics with bar/line charts, KPIs, completion averages, and Excel export (raw data + aggregated stats) without duplicate rows per date/activity.
 - Persistent SQLite storage, configurable settings, and structured logging.
-- Polished Microsoft/LinkedIn-inspired UI with accent header bar, card surfaces, and keyboard-friendly controls.
+- Polished Microsoft/LinkedIn-inspired UI with accent header bar, card surfaces, contextual help, and activity tips on selection.
+- Rich KPI pack (planned vs actual, focus ratio, category mix, switches/day, overtime, completion rate, productivity score) surfaced in the Statistics tab.
 - TensorFlow-ready AI assistant for duration/priority suggestions, daily plans, and pattern insights with graceful fallbacks when models are missing.
 - Optional AI productivity score + insights powered by the external AI-Productivity-Tracker project (neutral fallback when the repo or models are absent).
 - Packaging for Windows (.exe via PyInstaller) and Debian/Ubuntu (.deb via dpkg-deb) plus GitHub Actions CI/CD.

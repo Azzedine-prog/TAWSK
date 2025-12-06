@@ -6,7 +6,7 @@ import tomllib
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from . import __version__
 from .models import Activity, DailyEntry
@@ -171,6 +171,53 @@ class AppController:
 
     def get_stats(self, start_date: date, end_date: date):
         return self.storage.get_statistics_by_activity(start_date, end_date)
+
+    def get_kpis(self, start_date: date, end_date: date) -> Dict[str, str]:
+        """Compute higher-level KPIs using stored entries."""
+
+        entries = self.get_entries_between(start_date, end_date)
+        if not entries:
+            return {}
+
+        total_actual = sum(row[2] or 0.0 for row in entries)
+        total_planned = sum((row[4] or 0.0) for row in entries)
+        planned_vs_actual = (total_actual / total_planned * 100) if total_planned else None
+
+        focused_time = sum((row[2] or 0.0) * ((row[5] or 0.0) / 100) for row in entries)
+        focus_ratio = (focused_time / total_actual * 100) if total_actual else None
+
+        # Time per category/activity
+        category_hours: Dict[str, float] = {}
+        for _date, activity_name, hours, *_rest in entries:
+            category_hours[activity_name] = category_hours.get(activity_name, 0.0) + (hours or 0.0)
+
+        # Task switching frequency: count unique activities per day minus one
+        per_day: Dict[str, set] = {}
+        for entry_date, activity_name, *_rest in entries:
+            per_day.setdefault(entry_date, set()).add(activity_name)
+        switches = sum(max(0, len(names) - 1) for names in per_day.values())
+
+        # Overtime assumes 8h nominal day
+        overtime = sum(max(0.0, sum(row[2] or 0.0 for row in entries if row[0] == day) - 8.0) for day in per_day)
+
+        total_tasks = len(entries)
+        completed_tasks = sum(1 for row in entries if (row[5] or 0.0) >= 100)
+        completion_rate = (completed_tasks / total_tasks * 100) if total_tasks else None
+        avg_task_duration = (total_actual / total_tasks) if total_tasks else None
+
+        productivity_score = (focused_time * 0.6) + (completed_tasks * 0.3) - (switches * 0.1)
+
+        return {
+            "planned_vs_actual": f"{planned_vs_actual:.0f}%" if planned_vs_actual is not None else "N/A",
+            "focus_ratio": f"{focus_ratio:.0f}%" if focus_ratio is not None else "N/A",
+            "category_hours": ", ".join(f"{k}: {v:.1f}h" for k, v in sorted(category_hours.items(), key=lambda i: i[1], reverse=True)),
+            "switches": str(int(switches)),
+            "overtime": f"{overtime:.1f}h",
+            "completion_rate": f"{completion_rate:.0f}%" if completion_rate is not None else "N/A",
+            "avg_task_duration": f"{avg_task_duration:.2f}h" if avg_task_duration is not None else "N/A",
+            "productivity_score": f"{productivity_score:.1f}",
+            "goal_achievement": f"{completion_rate:.0f}%" if completion_rate is not None else "N/A",
+        }
 
     # Excel export
     def export_to_excel(self, start_date: date, end_date: date) -> Path:

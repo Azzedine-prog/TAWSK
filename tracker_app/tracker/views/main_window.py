@@ -148,6 +148,7 @@ class StatsPanel(wx.Panel):
         try:
             start, end = self._date_range()
             stats = self.controller.get_stats(start, end)
+            kpis = self.controller.get_kpis(start, end)
             if not stats:
                 self.kpi_text.SetLabel("No data in selected range.")
                 self.analysis_text.SetLabel("Track a session to see charts and KPIs here.")
@@ -161,16 +162,34 @@ class StatsPanel(wx.Panel):
             top_str = ", ".join(
                 f"{s.activity_name} ({s.total_hours:.1f}h, {s.avg_completion:.0f}% avg)" for s in top
             )
+            kpi_lines = [
+                f"Planned vs actual: {kpis.get('planned_vs_actual', 'N/A')}",
+                f"Focus time ratio: {kpis.get('focus_ratio', 'N/A')}",
+                f"Time per category: {kpis.get('category_hours', 'N/A')}",
+                f"Task switches/day: {kpis.get('switches', '0')}",
+                f"Overtime: {kpis.get('overtime', '0h')}",
+                f"Completion rate: {kpis.get('completion_rate', 'N/A')}",
+                f"Avg task duration: {kpis.get('avg_task_duration', 'N/A')}",
+                f"Productivity score: {kpis.get('productivity_score', 'N/A')}",
+            ]
             self.kpi_text.SetLabel(
-                f"Total hours: {total_hours:.1f}\nAverage per day: {avg_hours:.2f}\n"
-                f"Avg completion: {avg_completion:.0f}%\nTop activities: {top_str}"
+                "\n".join([
+                    f"Total hours: {total_hours:.1f}",
+                    f"Average per day: {avg_hours:.2f}",
+                    f"Avg completion: {avg_completion:.0f}%",
+                    f"Top activities: {top_str}",
+                    *kpi_lines,
+                ])
             )
             trend_note = (
                 "Your completion is steady—keep a rhythm."
                 if avg_completion >= 80
-                else "Completion is dipping; review targets and tighten focus blocks."
+                else "Completion is dipping; review targets, reduce context switching, and revisit estimates."
             )
-            self.analysis_text.SetLabel(trend_note)
+            self.analysis_text.SetLabel(
+                trend_note
+                + "\nPlanned vs actual highlights estimation accuracy; focus ratio shows deep-work share; switches track interruptions."
+            )
 
             fig, ax = plt.subplots(figsize=(6, 3))
             bars = ax.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=SECONDARY)
@@ -832,7 +851,6 @@ class MainPanel(wx.Panel):
                 self.activity_list.SetItem(idx, 1, f"{hours:.2f}h")
                 self.activity_list.SetItem(idx, 2, f"{act.default_target_hours:.2f}h")
                 self.activity_list.SetItemData(idx, act.id)
-                self.activity_list.SetItemToolTip(idx, f"{act.description or 'No description set.'}\nPlanned: {act.default_target_hours:.2f}h")
                 if self.selected_activity == act.id:
                     self.activity_list.Select(idx)
             for col in range(3):
@@ -841,6 +859,15 @@ class MainPanel(wx.Panel):
             self.refresh_today()
 
         self._with_error_dialog("Loading activities", action)
+
+    def on_activity_selected(self, event: wx.ListEvent) -> None:
+        idx = event.GetIndex()
+        activity_id = self.activity_list.GetItemData(idx)
+        act = next((a for a in self.controller.list_activities() if a.id == activity_id), None)
+        if act:
+            desc = act.description or "No description set."
+            planned = f"Planned: {act.default_target_hours:.2f}h"
+            self.activity_list.SetToolTip(f"{act.name}\n{desc}\n{planned}")
 
     def _activity_name(self, activity_id: int) -> str:
         activity = next((a.name for a in self.controller.list_activities() if a.id == activity_id), "Activity")
