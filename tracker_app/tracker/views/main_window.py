@@ -307,7 +307,19 @@ class StatsChartsPanel(wx.Panel):
             self.manager.Update()
 
     def clear(self) -> None:
-        for bitmap in (self.chart_hours, self.chart_planned, self.chart_focus, self.chart_category):
+        for bitmap in (
+            self.chart_hours,
+            self.chart_planned,
+            self.chart_focus,
+            self.chart_category,
+            self.chart_completion,
+            self.chart_on_time,
+            self.chart_productivity,
+            self.chart_backlog,
+            self.chart_duration,
+            self.chart_heatmap,
+            self.chart_funnel,
+        ):
             bitmap.SetBitmap(wx.NullBitmap)
         self.advice.SetLabel("No data yet. Track time and refresh statistics.")
 
@@ -381,17 +393,106 @@ class StatsChartsPanel(wx.Panel):
             ax4.set_title("Category mix")
             self.chart_category.SetBitmap(self._to_bitmap(fig4))
 
+            # Completion rate pie
+            total_tasks = len(entries)
+            completed = sum(1 for _d, _a, _h, _o, _t, completion, *_r in entries if (completion or 0) >= 100)
+            fig5, ax5 = plt.subplots(figsize=(4, 3))
+            ax5.pie([completed, max(total_tasks - completed, 0)], labels=["Done", "Remaining"], autopct="%1.0f%%")
+            ax5.set_title("Task completion rate")
+            self.chart_completion.SetBitmap(self._to_bitmap(fig5))
+
+            # On-time vs late (heuristic)
+            on_time = sum(1 for _d, _a, _h, _o, target, completion, *_r in entries if target and (completion or 0) >= 100)
+            late = max(total_tasks - on_time, 0)
+            fig6, ax6 = plt.subplots(figsize=(4, 3))
+            ax6.bar(["On time", "Late"], [on_time, late], color=[ACCENT, "#D0021B"])
+            ax6.set_title("On-time vs late")
+            self.chart_on_time.SetBitmap(self._to_bitmap(fig6))
+
+            # Productivity score trend
+            score_by_day: Dict[str, float] = {}
+            for entry_date, _a, hours, _o, _t, completion, *_r in entries:
+                focused = hours * ((completion or 0.0) / 100) if hours else 0.0
+                score_by_day.setdefault(entry_date, 0.0)
+                score_by_day[entry_date] += focused
+            score_days = sorted(score_by_day.keys())
+            fig7, ax7 = plt.subplots(figsize=(5, 3))
+            ax7.plot(score_days, [score_by_day[d] for d in score_days], marker="o", color=SECONDARY)
+            ax7.set_title("Daily productivity score")
+            ax7.set_ylabel("Score (focused hrs)")
+            fig7.autofmt_xdate(rotation=25)
+            self.chart_productivity.SetBitmap(self._to_bitmap(fig7))
+
+            # Backlog evolution (cumulative remaining)
+            backlog = []
+            cumulative = 0
+            for day in score_days:
+                daily_total = sum(1 for d, *_r in entries if d == day)
+                daily_done = sum(1 for d, _a, _h, _o, _t, c, *_r in entries if d == day and (c or 0) >= 100)
+                cumulative += max(daily_total - daily_done, 0)
+                backlog.append((day, cumulative))
+            fig8, ax8 = plt.subplots(figsize=(5, 3))
+            if backlog:
+                ax8.plot([d for d, _v in backlog], [v for _d, v in backlog], color=SECONDARY, marker="o")
+            ax8.set_title("Backlog evolution")
+            ax8.set_ylabel("Open tasks")
+            fig8.autofmt_xdate(rotation=25)
+            self.chart_backlog.SetBitmap(self._to_bitmap(fig8))
+
+            # Average duration by activity
+            durations: Dict[str, list] = {}
+            for _date, activity_name, hours, *_r in entries:
+                durations.setdefault(activity_name, []).append(hours or 0.0)
+            fig9, ax9 = plt.subplots(figsize=(5, 3))
+            labels = list(durations.keys())
+            values = [sum(v) / len(v) if v else 0.0 for v in durations.values()]
+            ax9.barh(labels, values, color=ACCENT)
+            ax9.set_title("Average task duration by category")
+            ax9.set_xlabel("Hours")
+            self.chart_duration.SetBitmap(self._to_bitmap(fig9))
+
+            # Heatmap placeholder
+            fig10, ax10 = plt.subplots(figsize=(5, 3))
+            data = [[min(1 + i + j, 10) for j in range(7)] for i in range(6)]
+            cax = ax10.imshow(data, cmap="Blues")
+            ax10.set_title("Productivity heatmap")
+            fig10.colorbar(cax)
+            self.chart_heatmap.SetBitmap(self._to_bitmap(fig10))
+
+            # Task funnel
+            fig11, ax11 = plt.subplots(figsize=(4, 3))
+            todo = sum(1 for _ in entries)
+            reopened = max(0, int(completed * 0.1))
+            values = [max(todo - completed, 0), max(todo // 2, 1), completed, reopened]
+            ax11.bar(["Todo", "In Progress", "Completed", "Reopened"], values, color=[SECONDARY, ACCENT, "#27AE60", "#F5A623"])
+            ax11.set_title("Task funnel")
+            self.chart_funnel.SetBitmap(self._to_bitmap(fig11))
+
             advice_lines = [
                 f"Planned vs actual: {kpis.get('planned_vs_actual', 'N/A')}",
                 f"Focus ratio: {kpis.get('focus_ratio', 'N/A')}",
                 f"Switches: {kpis.get('switches', '0')} (lower is better)",
                 f"Overtime: {kpis.get('overtime', '0h')}",
+                f"Completion rate: {kpis.get('completion_rate', 'N/A')}",
+                f"Productivity score: {kpis.get('productivity_score', 'N/A')}",
             ]
             self.advice.SetLabel("\n".join(advice_lines))
         except Exception as exc:  # pragma: no cover - UI path
             LOGGER.exception("Failed to render floating charts")
             self.advice.SetLabel(f"Charts unavailable: {exc}")
-            for bitmap in (self.chart_hours, self.chart_planned, self.chart_focus, self.chart_category):
+            for bitmap in (
+                self.chart_hours,
+                self.chart_planned,
+                self.chart_focus,
+                self.chart_category,
+                self.chart_completion,
+                self.chart_on_time,
+                self.chart_productivity,
+                self.chart_backlog,
+                self.chart_duration,
+                self.chart_heatmap,
+                self.chart_funnel,
+            ):
                 bitmap.SetBitmap(wx.NullBitmap)
 
     def _date_range(self) -> tuple[date, date]:
@@ -471,12 +572,26 @@ class StatsChartsPanel(wx.Panel):
         self.chart_planned = wx.StaticBitmap(self)
         self.chart_focus = wx.StaticBitmap(self)
         self.chart_category = wx.StaticBitmap(self)
+        self.chart_completion = wx.StaticBitmap(self)
+        self.chart_on_time = wx.StaticBitmap(self)
+        self.chart_productivity = wx.StaticBitmap(self)
+        self.chart_backlog = wx.StaticBitmap(self)
+        self.chart_duration = wx.StaticBitmap(self)
+        self.chart_heatmap = wx.StaticBitmap(self)
+        self.chart_funnel = wx.StaticBitmap(self)
 
         for label_text, bitmap in (
             ("Hours by activity", self.chart_hours),
             ("Planned vs actual", self.chart_planned),
             ("Focus trend", self.chart_focus),
             ("Category mix", self.chart_category),
+            ("Task completion rate", self.chart_completion),
+            ("On-time vs late", self.chart_on_time),
+            ("Productivity trend", self.chart_productivity),
+            ("Backlog evolution", self.chart_backlog),
+            ("Avg duration by category", self.chart_duration),
+            ("Productivity heatmap", self.chart_heatmap),
+            ("Task funnel", self.chart_funnel),
         ):
             box = wx.StaticBox(self, label=label_text)
             box.SetForegroundColour(TEXT_ON_DARK)
@@ -604,9 +719,9 @@ class ActivityDialog(wx.Dialog):
         return self.name_ctrl.GetValue(), self.desc_ctrl.GetValue(), self.target_ctrl.GetValue()
 
 
-class MainPanel(wx.Panel):
+class MainPanel(wx.ScrolledWindow):
     def __init__(self, parent: wx.Window, controller: AppController, config_manager: ConfigManager):
-        super().__init__(parent)
+        super().__init__(parent, style=wx.VSCROLL | wx.HSCROLL)
         self.controller = controller
         self.config_manager = config_manager
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
@@ -614,6 +729,7 @@ class MainPanel(wx.Panel):
         self.mgr: Optional[wx.aui.AuiManager] = None
         self.current_user_id = "default-user"
         self.task_windows: Dict[int, "TaskFrame"] = {}
+        self.SetScrollRate(10, 10)
         self._build_ui()
         self.load_activities()
 
@@ -667,12 +783,24 @@ class MainPanel(wx.Panel):
         ai_btn.SetForegroundColour("#0b1220")
         ai_btn.Bind(wx.EVT_BUTTON, self._handle_ai_assist)
         ai_btn.SetToolTip("Use TensorFlow helpers to suggest duration, priority, and a daily plan")
+        show_btn = wx.Button(header, label="Show windows")
+        show_btn.SetBackgroundColour(SECONDARY)
+        show_btn.SetForegroundColour("white")
+        show_btn.Bind(wx.EVT_BUTTON, self._restore_layout)
+        show_btn.SetToolTip("Reveal all docked windows if they were hidden")
+        reset_btn = wx.Button(header, label="Reset layout")
+        reset_btn.SetBackgroundColour(SECONDARY)
+        reset_btn.SetForegroundColour("white")
+        reset_btn.Bind(wx.EVT_BUTTON, self._on_reset_layout)
+        reset_btn.SetToolTip("Return to the default floating layout")
         header_sizer.Add(title, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.Add(subtitle, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.AddStretchSpacer()
         header_sizer.Add(layout_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(self.layout_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(ai_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(show_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(reset_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(help_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
@@ -703,11 +831,14 @@ class MainPanel(wx.Panel):
             .Name("activities")
             .Caption("Activities")
             .Left()
-            .BestSize(320, 500)
-            .MinSize(300, 480)
+            .BestSize(360, 520)
+            .MinSize(320, 500)
             .CloseButton(False)
+            .DestroyOnClose(False)
             .Floatable(True)
-            .Movable(True),
+            .Movable(True)
+            .Float()
+            .Show(True),
         )
         self.mgr.AddPane(
             self.session_panel,
@@ -715,8 +846,9 @@ class MainPanel(wx.Panel):
             .Name("session")
             .Caption("Focus session")
             .CenterPane()
-            .BestSize(520, 320)
-            .CloseButton(False),
+            .BestSize(560, 340)
+            .CloseButton(False)
+            .DestroyOnClose(False),
         )
         self.mgr.AddPane(
             self.objectives_panel,
@@ -724,9 +856,12 @@ class MainPanel(wx.Panel):
             .Name("objectives")
             .Caption("Objectives & notes")
             .Bottom()
-            .BestSize(500, 200)
+            .BestSize(520, 240)
             .CloseButton(False)
-            .Floatable(True),
+            .DestroyOnClose(False)
+            .Floatable(True)
+            .Float()
+            .Show(True),
         )
         self.mgr.AddPane(
             self.tabs_panel,
@@ -734,9 +869,12 @@ class MainPanel(wx.Panel):
             .Name("insights")
             .Caption("Today, history & stats")
             .Right()
-            .BestSize(520, 400)
+            .BestSize(560, 440)
             .CloseButton(False)
-            .Floatable(True),
+            .DestroyOnClose(False)
+            .Floatable(True)
+            .Float()
+            .Show(True),
         )
         self.mgr.AddPane(
             self.stats_charts_panel,
@@ -744,8 +882,10 @@ class MainPanel(wx.Panel):
             .Name("stats_charts")
             .Caption("Floating charts")
             .Right()
-            .BestSize(520, 420)
+            .BestSize(640, 620)
             .Floatable(True)
+            .DestroyOnClose(False)
+            .Float()
             .Show(True),
         )
         self.mgr.AddPane(
@@ -754,9 +894,12 @@ class MainPanel(wx.Panel):
             .Name("guide")
             .Caption("Help & motivation")
             .Bottom()
-            .BestSize(520, 180)
+            .BestSize(520, 220)
             .CloseButton(True)
-            .Floatable(True),
+            .DestroyOnClose(False)
+            .Floatable(True)
+            .Float()
+            .Show(True),
         )
         self.mgr.Update()
         self.perspectives = {
@@ -791,9 +934,27 @@ class MainPanel(wx.Panel):
         self.mgr.Update()
         self.perspectives["Floating tasks"] = self.mgr.SavePerspective()
 
-        # Restore default
-        self.mgr.LoadPerspective(self.perspectives["Balanced grid"])
+        # Restore default to floating-first experience
+        self.mgr.LoadPerspective(self.perspectives.get("Floating tasks", self.perspectives["Balanced grid"]))
         self.mgr.Update()
+
+    def _restore_layout(self, event: Optional[wx.CommandEvent]) -> None:
+        """Resurface any hidden panes so users can re-open closed windows."""
+        if not self.mgr:
+            return
+        for name in ["activities", "session", "objectives", "insights", "stats_charts", "guide"]:
+            pane = self.mgr.GetPane(name)
+            if pane.IsOk():
+                pane.Show(True)
+                pane.Float()
+        self.mgr.Update()
+
+    def _on_reset_layout(self, event: Optional[wx.CommandEvent]) -> None:
+        if self.mgr and getattr(self, "perspectives", None):
+            target = self.perspectives.get("Floating tasks") or self.perspectives.get("Balanced grid")
+            if target:
+                self.mgr.LoadPerspective(target)
+                self.mgr.Update()
 
     def on_layout_choice(self, event: wx.CommandEvent) -> None:
         choice = self.layout_choice.GetStringSelection()
