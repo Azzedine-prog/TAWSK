@@ -752,12 +752,12 @@ class MainPanel(wx.ScrolledWindow):
     def _build_ribbon(self) -> RB.RibbonBar:
         """Create an Office-like ribbon with grouped actions and icons."""
 
-        ribbon = RB.RibbonBar(
-            self,
-            style=RB.RIBBON_BAR_DEFAULT_STYLE
+        ribbon_style = (
+            RB.RIBBON_BAR_DEFAULT_STYLE
             | RB.RIBBON_BAR_SHOW_PANEL_EXT_BUTTONS
-            | RB.RIBBON_BAR_FLOW_HORIZONTAL,
+            | RB.RIBBON_BAR_FLOW_HORIZONTAL
         )
+        ribbon = RB.RibbonBar(self, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, ribbon_style)
         ribbon.SetArtProvider(RB.RibbonMSWArtProvider())
 
         def add_button(bar: RB.RibbonButtonBar, label: str, art: str, handler, help_str: str = "") -> None:
