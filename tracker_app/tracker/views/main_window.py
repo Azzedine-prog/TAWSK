@@ -731,6 +731,7 @@ class MainPanel(wx.ScrolledWindow):
         self.mgr: Optional[wx.aui.AuiManager] = None
         self.current_user_id = "default-user"
         self.task_windows: Dict[int, "TaskFrame"] = {}
+        self._focus_mode_enabled: bool = False
         self.SetScrollRate(10, 10)
         self._build_ui()
         self.load_activities()
@@ -1073,6 +1074,25 @@ class MainPanel(wx.ScrolledWindow):
             self._show_pane(name, dock=True)
         for name in ["objectives", "stats_charts", "guide"]:
             self._show_pane(name, floatable=True)
+
+    def _toggle_focus_mode(self, event: Optional[wx.CommandEvent]) -> None:
+        """Toggle between the focus-oriented layout and the default floating trio."""
+        if not self.mgr or not getattr(self, "perspectives", None):
+            return
+
+        target_name = "Focus timer" if not self._focus_mode_enabled else "Floating tasks"
+        target = self.perspectives.get(target_name)
+        if not target:
+            # Fallback to any available layout
+            target = next(iter(self.perspectives.values()))
+        if target:
+            self.mgr.LoadPerspective(target)
+            self.mgr.Update()
+            if getattr(self, "layout_choice", None):
+                idx = self.layout_choice.FindString(target_name)
+                if idx != wx.NOT_FOUND:
+                    self.layout_choice.SetSelection(idx)
+        self._focus_mode_enabled = target_name == "Focus timer"
 
     def _on_reset_layout(self, event: Optional[wx.CommandEvent]) -> None:
         if self.mgr and getattr(self, "perspectives", None):
