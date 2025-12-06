@@ -761,7 +761,11 @@ class MainPanel(wx.ScrolledWindow):
         )
         ribbon = RB.RibbonBar(self, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, ribbon_style)
         art = RB.RibbonMSWArtProvider()
-        art.SetColourScheme(PRIMARY, SECONDARY, BACKGROUND)
+        try:
+            art.SetColourScheme(wx.Colour(PRIMARY), wx.Colour(SECONDARY), wx.Colour(BACKGROUND))
+        except Exception as exc:  # pragma: no cover - defensive for older wx versions
+            LOGGER.warning("Ribbon color fallback due to conversion issue: %s", exc)
+            art.SetColourScheme(wx.Colour(31, 41, 55), wx.Colour(74, 144, 226), wx.Colour(247, 249, 252))
         ribbon.SetArtProvider(art)
         ribbon.SetFont(wx.Font(wx.FontInfo(11).FaceName(ribbon.GetFont().GetFaceName())))
 
