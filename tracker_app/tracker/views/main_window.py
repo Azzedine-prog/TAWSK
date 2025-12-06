@@ -735,6 +735,7 @@ class MainPanel(wx.ScrolledWindow):
         self.SetScrollRate(10, 10)
         self._build_ui()
         self.load_activities()
+        self.Bind(wx.EVT_SIZE, self._on_resize)
 
     def _make_card(self, title: str, parent: wx.Window) -> tuple[wx.Panel, wx.BoxSizer]:
         panel = wx.Panel(parent)
@@ -759,7 +760,10 @@ class MainPanel(wx.ScrolledWindow):
             | RB.RIBBON_BAR_FLOW_HORIZONTAL
         )
         ribbon = RB.RibbonBar(self, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, ribbon_style)
-        ribbon.SetArtProvider(RB.RibbonMSWArtProvider())
+        art = RB.RibbonMSWArtProvider()
+        art.SetColourScheme(PRIMARY, SECONDARY, BACKGROUND)
+        ribbon.SetArtProvider(art)
+        ribbon.SetFont(wx.Font(wx.FontInfo(11).FaceName(ribbon.GetFont().GetFaceName())))
 
         def add_button(bar: RB.RibbonButtonBar, label: str, art: str, handler, help_str: str = "") -> None:
             btn_id = wx.NewId()
@@ -918,7 +922,7 @@ class MainPanel(wx.ScrolledWindow):
 
         dock_host = wx.Panel(self)
         dock_host.SetBackgroundColour(BACKGROUND)
-        dock_host.SetMinSize((1100, 760))
+        dock_host.SetMinSize((880, 640))
         self.mgr = wx.aui.AuiManager(dock_host)
 
         self.activities_panel = self._build_activities_panel(dock_host)
@@ -944,7 +948,7 @@ class MainPanel(wx.ScrolledWindow):
             .Left()
             .BestSize(360, 520)
             .MinSize(320, 500)
-            .CloseButton(False)
+            .CloseButton(True)
             .DestroyOnClose(False)
             .Floatable(True)
             .Movable(True)
@@ -958,7 +962,7 @@ class MainPanel(wx.ScrolledWindow):
             .Caption("Focus session")
             .CenterPane()
             .BestSize(560, 340)
-            .CloseButton(False)
+            .CloseButton(True)
             .DestroyOnClose(False),
         )
         self.mgr.AddPane(
@@ -968,7 +972,7 @@ class MainPanel(wx.ScrolledWindow):
             .Caption("Objectives & notes")
             .Bottom()
             .BestSize(520, 240)
-            .CloseButton(False)
+            .CloseButton(True)
             .DestroyOnClose(False)
             .Floatable(True)
             .Float()
@@ -981,7 +985,7 @@ class MainPanel(wx.ScrolledWindow):
             .Caption("Today, history & stats")
             .Right()
             .BestSize(560, 440)
-            .CloseButton(False)
+            .CloseButton(True)
             .DestroyOnClose(False)
             .Floatable(True)
             .Float()
@@ -1127,6 +1131,11 @@ class MainPanel(wx.ScrolledWindow):
         start = date.today() - timedelta(days=29)
         end = date.today()
         self._export_range(start, end, "Export last 30 days")
+
+    def _on_resize(self, event: wx.SizeEvent) -> None:
+        if self.mgr:
+            self.mgr.Update()
+        event.Skip()
 
     def _export_range(self, start: date, end: date, title: str) -> None:
         try:
