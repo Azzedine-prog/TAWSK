@@ -20,14 +20,17 @@ from tracker_app.core.ai_service import AIAssistantService
 from tracker_app.tracker.controllers import AppController, ConfigManager, CONFIG_DIR
 
 LOGGER = logging.getLogger(__name__)
-PRIMARY = "#2564CF"  # Outlook-like ribbon blue
-SECONDARY = "#5E9BFF"  # supporting accent blue
-ACCENT = "#2ECC71"  # success mint
-BACKGROUND = "#F4F6FA"
+PRIMARY = "#4A90E2"  # Calm modern blue
+SECONDARY = "#6AAAF0"  # Hover/highlight
+ACCENT = "#63C297"  # Productivity green
+BACKGROUND = "#F6F7FB"
 SURFACE = "#FFFFFF"
 CARD = "#FFFFFF"
-TEXT_ON_DARK = "#2D3436"
-MUTED = "#7F8C8D"
+TEXT_ON_DARK = "#1E1F22"
+MUTED = "#8A8C93"
+ERROR = "#E14C4C"
+WARNING = "#FFC857"
+SUCCESS = "#57C785"
 
 MOTIVATION = [
     "Small steps today compound into big wins tomorrow.",
@@ -151,6 +154,8 @@ class StatsPanel(wx.Panel):
         refresh_btn = wx.Button(self, label="Refresh")
         refresh_btn.SetBackgroundColour(SECONDARY)
         refresh_btn.SetForegroundColour("white")
+        refresh_btn.SetMinSize((140, 38))
+        refresh_btn.SetFont(self.GetFont())
         refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
         refresh_btn.SetToolTip("Recompute KPIs and charts for the selected window")
         range_sizer.Add(refresh_btn, 0, wx.ALL, 4)
@@ -158,6 +163,8 @@ class StatsPanel(wx.Panel):
         export_btn = wx.Button(self, label="Export Excel")
         export_btn.SetBackgroundColour(SECONDARY)
         export_btn.SetForegroundColour("white")
+        export_btn.SetMinSize((140, 38))
+        export_btn.SetFont(self.GetFont())
         export_btn.Bind(wx.EVT_BUTTON, self._on_export)
         export_btn.SetToolTip("Write raw data and KPIs to statistics.xlsx")
         range_sizer.Add(export_btn, 0, wx.ALL, 4)
@@ -341,7 +348,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
         try:
             # Hours by activity
             fig1, ax1 = plt.subplots(figsize=(5, 3))
-            bars = ax1.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=SECONDARY)
+            bars = ax1.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=PRIMARY)
             ax1.set_title("Hours by activity")
             ax1.bar_label(bars, fmt="{:.1f}h")
             ax1.set_ylabel("Hours")
@@ -357,7 +364,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 per_day_planned[entry_date] = per_day_planned.get(entry_date, 0.0) + (target or 0.0)
             days_sorted = sorted(per_day_actual.keys())
             fig2, ax2 = plt.subplots(figsize=(5, 3))
-            ax2.plot(days_sorted, [per_day_actual[d] for d in days_sorted], marker="o", color=SECONDARY, label="Actual")
+            ax2.plot(days_sorted, [per_day_actual[d] for d in days_sorted], marker="o", color=PRIMARY, label="Actual")
             ax2.plot(days_sorted, [per_day_planned.get(d, 0.0) for d in days_sorted], marker="s", color=ACCENT, label="Planned")
             ax2.set_title("Planned vs actual")
             ax2.set_ylabel("Hours")
@@ -379,7 +386,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 actual = per_day_actual.get(d, 0.0)
                 ratio = (focus_by_day[d] / actual * 100) if actual else 0
                 ratios.append(ratio)
-            ax3.plot(focus_days, ratios, marker="o", color="#2ecc71")
+            ax3.plot(focus_days, ratios, marker="o", color=ACCENT)
             ax3.set_title("Focus ratio")
             ax3.set_ylabel("% of deep work")
             fig3.autofmt_xdate(rotation=25)
@@ -392,7 +399,8 @@ class StatsChartsPanel(wx.ScrolledWindow):
             fig4, ax4 = plt.subplots(figsize=(4.5, 3))
             labels = list(category_hours.keys())
             values = list(category_hours.values())
-            ax4.pie(values, labels=labels, autopct="%1.0f%%", colors=plt.cm.tab20.colors)
+            pastel = ["#AEE3FF", "#FFCBAA", "#A890FF", "#FFEFA8", ACCENT, PRIMARY]
+            ax4.pie(values, labels=labels, autopct="%1.0f%%", colors=pastel[: len(labels)])
             ax4.set_title("Category mix")
             self.chart_category.SetBitmap(self._to_bitmap(fig4))
 
@@ -408,7 +416,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
             on_time = sum(1 for _d, _a, _h, _o, target, completion, *_r in entries if target and (completion or 0) >= 100)
             late = max(total_tasks - on_time, 0)
             fig6, ax6 = plt.subplots(figsize=(4, 3))
-            ax6.bar(["On time", "Late"], [on_time, late], color=[ACCENT, "#D0021B"])
+            ax6.bar(["On time", "Late"], [on_time, late], color=[ACCENT, ERROR])
             ax6.set_title("On-time vs late")
             self.chart_on_time.SetBitmap(self._to_bitmap(fig6))
 
@@ -420,7 +428,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 score_by_day[entry_date] += focused
             score_days = sorted(score_by_day.keys())
             fig7, ax7 = plt.subplots(figsize=(5, 3))
-            ax7.plot(score_days, [score_by_day[d] for d in score_days], marker="o", color=SECONDARY)
+            ax7.plot(score_days, [score_by_day[d] for d in score_days], marker="o", color=PRIMARY)
             ax7.set_title("Daily productivity score")
             ax7.set_ylabel("Score (focused hrs)")
             fig7.autofmt_xdate(rotation=25)
@@ -436,7 +444,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 backlog.append((day, cumulative))
             fig8, ax8 = plt.subplots(figsize=(5, 3))
             if backlog:
-                ax8.plot([d for d, _v in backlog], [v for _d, v in backlog], color=SECONDARY, marker="o")
+                ax8.plot([d for d, _v in backlog], [v for _d, v in backlog], color=PRIMARY, marker="o")
             ax8.set_title("Backlog evolution")
             ax8.set_ylabel("Open tasks")
             fig8.autofmt_xdate(rotation=25)
@@ -467,7 +475,11 @@ class StatsChartsPanel(wx.ScrolledWindow):
             todo = sum(1 for _ in entries)
             reopened = max(0, int(completed * 0.1))
             values = [max(todo - completed, 0), max(todo // 2, 1), completed, reopened]
-            ax11.bar(["Todo", "In Progress", "Completed", "Reopened"], values, color=[SECONDARY, ACCENT, "#27AE60", "#F5A623"])
+            ax11.bar(
+                ["Todo", "In Progress", "Completed", "Reopened"],
+                values,
+                color=[PRIMARY, ACCENT, SUCCESS, WARNING],
+            )
             ax11.set_title("Task funnel")
             self.chart_funnel.SetBitmap(self._to_bitmap(fig11))
 
@@ -557,11 +569,15 @@ class StatsChartsPanel(wx.ScrolledWindow):
         refresh_btn = wx.Button(self, label="Refresh charts")
         refresh_btn.SetBackgroundColour(SECONDARY)
         refresh_btn.SetForegroundColour("white")
+        refresh_btn.SetMinSize((160, 38))
+        refresh_btn.SetFont(self.GetFont())
         refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
         range_sizer.Add(refresh_btn, 0, wx.ALL, 4)
         export_btn = wx.Button(self, label="Export Excel")
         export_btn.SetBackgroundColour(SECONDARY)
         export_btn.SetForegroundColour("white")
+        export_btn.SetMinSize((160, 38))
+        export_btn.SetFont(self.GetFont())
         export_btn.SetToolTip("Write raw data and KPIs to statistics.xlsx")
         export_btn.Bind(wx.EVT_BUTTON, self.on_export)
         range_sizer.Add(export_btn, 0, wx.ALL, 4)
@@ -735,6 +751,9 @@ class MainPanel(wx.ScrolledWindow):
         self.task_windows: Dict[int, "TaskFrame"] = {}
         self._focus_mode_enabled: bool = False
         self.SetScrollRate(10, 10)
+        self._base_font = wx.Font(14, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName="Inter")
+        self.SetFont(self._base_font)
+        self.SetBackgroundColour(BACKGROUND)
         self._build_ui()
         self.load_activities()
         self.Bind(wx.EVT_SIZE, self._on_resize)
