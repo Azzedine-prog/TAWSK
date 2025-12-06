@@ -1,0 +1,12 @@
+pandas
+openpyxl
+matplotlib
+wxPython
+pyinstaller
+pytest
+pytest-cov
+flake8
+tensorflow-cpu
+numpy
+scikit-learn
+joblib
