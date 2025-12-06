@@ -14,18 +14,21 @@ class Activity:
     name: str
     description: str = ""
     default_target_hours: float = 0.0
+    tags: str = ""
     is_active: bool = True
 
     @classmethod
     def from_row(cls, row: tuple) -> "Activity":
         description = row[2] if len(row) > 2 and row[2] is not None else ""
         default_target = row[3] if len(row) > 3 and row[3] is not None else 0.0
-        is_active = bool(row[4]) if len(row) > 4 else bool(row[2]) if len(row) > 2 else True
+        tags = row[4] if len(row) > 4 and row[4] is not None else ""
+        is_active = bool(row[5]) if len(row) > 5 else bool(row[2]) if len(row) > 2 else True
         return cls(
             id=row[0],
             name=row[1],
             description=description,
             default_target_hours=default_target,
+            tags=tags,
             is_active=is_active,
         )
 

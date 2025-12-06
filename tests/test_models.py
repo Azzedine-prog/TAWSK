@@ -4,11 +4,12 @@ from tracker_app.tracker.models import Activity, DailyEntry
 
 
 def test_activity_from_row():
-    row = (1, "Test", 1)
+    row = (1, "Test", "", 0.0, "focus,deep", 1)
     activity = Activity.from_row(row)
     assert activity.id == 1
     assert activity.name == "Test"
     assert activity.is_active is True
+    assert activity.tags == "focus,deep"
 
 
 def test_daily_entry_from_row():

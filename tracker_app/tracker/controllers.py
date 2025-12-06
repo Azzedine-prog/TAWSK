@@ -102,8 +102,12 @@ class AppController:
     def list_activities(self) -> List[Activity]:
         return self.storage.get_activities()
 
-    def add_activity(self, name: str, description: str = "", default_target_hours: float = 0.0) -> Activity:
-        return self.storage.create_activity(name, description=description, default_target_hours=default_target_hours)
+    def add_activity(
+        self, name: str, description: str = "", default_target_hours: float = 0.0, tags: str = ""
+    ) -> Activity:
+        return self.storage.create_activity(
+            name, description=description, default_target_hours=default_target_hours, tags=tags
+        )
 
     def update_activity(
         self,
@@ -112,6 +116,7 @@ class AppController:
         description: Optional[str] = None,
         default_target_hours: Optional[float] = None,
         is_active: Optional[bool] = None,
+        tags: Optional[str] = None,
     ) -> None:
         self.storage.update_activity(
             activity_id,
@@ -119,6 +124,25 @@ class AppController:
             description=description,
             default_target_hours=default_target_hours,
             is_active=is_active,
+            tags=tags,
+        )
+
+    def duplicate_activity(self, activity_id: int) -> Optional[Activity]:
+        activities = {a.id: a for a in self.storage.get_activities()}
+        source = activities.get(activity_id)
+        if not source:
+            return None
+        new_name = f"{source.name} (Copy)"
+        suffix = 1
+        existing_names = {a.name for a in activities.values()}
+        while new_name in existing_names:
+            suffix += 1
+            new_name = f"{source.name} (Copy {suffix})"
+        return self.add_activity(
+            new_name,
+            description=source.description,
+            default_target_hours=source.default_target_hours,
+            tags=source.tags,
         )
 
     def delete_activity(self, activity_id: int) -> None:
@@ -155,6 +179,38 @@ class AppController:
             comments=comments,
         )
         return elapsed
+
+    def add_manual_time(
+        self,
+        activity_id: int,
+        hours: float,
+        objectives: str = "",
+        comments: str = "",
+        stop_reason: str = "Manual entry",
+    ) -> None:
+        self.storage.upsert_daily_entry(
+            self.today,
+            activity_id,
+            duration_hours_delta=hours,
+            objectives_text=objectives,
+            target_hours=0.0,
+            completion_percent=0.0,
+            stop_reason=stop_reason,
+            comments=comments,
+        )
+
+    def log_break(self, activity_id: int, minutes: float, reason: str, comments: str = "") -> None:
+        stop_note = reason or "Break"
+        self.storage.upsert_daily_entry(
+            self.today,
+            activity_id,
+            duration_hours_delta=0.0,
+            objectives_text="",
+            target_hours=0.0,
+            completion_percent=0.0,
+            stop_reason=stop_note,
+            comments=comments or f"Break: {minutes:.0f} minutes",
+        )
 
     def reset_timer(self, activity_id: int) -> None:
         self.timers.reset(activity_id)
@@ -233,6 +289,15 @@ class AppController:
         cfg = self.config_manager.config
         cfg.last_selected_activity = last_activity
         self.config_manager.save(cfg)
+
+    def backup_database(self) -> Path:
+        return self.storage.backup_database()
+
+    def export_tasks(self, path: Path) -> Path:
+        return self.storage.export_tasks(path)
+
+    def import_tasks(self, path: Path) -> int:
+        return self.storage.import_tasks(path)
 
     def refresh_today(self) -> None:
         self.today = date.today()

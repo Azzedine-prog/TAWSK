@@ -1,10 +1,13 @@
 """SQLite-backed persistence layer."""
 from __future__ import annotations
 
+import csv
+import json
 import logging
+import shutil
 import sqlite3
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
@@ -44,6 +47,7 @@ class Storage:
                     name TEXT NOT NULL UNIQUE,
                     description TEXT,
                     default_target_hours REAL NOT NULL DEFAULT 0,
+                    tags TEXT,
                     is_active INTEGER NOT NULL DEFAULT 1
                 )
                 """
@@ -85,22 +89,25 @@ class Storage:
         _add_column("comments", "TEXT")
         _add_column("description", "TEXT", table="activities")
         _add_column("default_target_hours", "REAL NOT NULL DEFAULT 0", table="activities")
+        _add_column("tags", "TEXT", table="activities")
 
     def get_activities(self) -> List[Activity]:
         with self._get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT id, name, description, default_target_hours, is_active FROM activities ORDER BY name ASC"
+                "SELECT id, name, description, default_target_hours, tags, is_active FROM activities ORDER BY name ASC"
             )
             rows = cur.fetchall()
             return [Activity.from_row(row) for row in rows]
 
-    def create_activity(self, name: str, description: str = "", default_target_hours: float = 0.0) -> Activity:
+    def create_activity(
+        self, name: str, description: str = "", default_target_hours: float = 0.0, tags: str = ""
+    ) -> Activity:
         with self._get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO activities (name, description, default_target_hours, is_active) VALUES (?, ?, ?, 1)",
-                (name, description, default_target_hours),
+                "INSERT INTO activities (name, description, default_target_hours, tags, is_active) VALUES (?, ?, ?, ?, 1)",
+                (name, description, default_target_hours, tags),
             )
             activity_id = cur.lastrowid
             LOGGER.info("Created activity %s", name)
@@ -109,6 +116,7 @@ class Storage:
                 name=name,
                 description=description,
                 default_target_hours=default_target_hours,
+                tags=tags,
                 is_active=True,
             )
 
@@ -119,6 +127,7 @@ class Storage:
         description: Optional[str] = None,
         default_target_hours: Optional[float] = None,
         is_active: Optional[bool] = None,
+        tags: Optional[str] = None,
     ) -> None:
         parts: List[str] = []
         params: List[object] = []
@@ -131,6 +140,9 @@ class Storage:
         if default_target_hours is not None:
             parts.append("default_target_hours = ?")
             params.append(default_target_hours)
+        if tags is not None:
+            parts.append("tags = ?")
+            params.append(tags)
         if is_active is not None:
             parts.append("is_active = ?")
             params.append(1 if is_active else 0)
@@ -308,3 +320,57 @@ class Storage:
                 }
                 for row in cur.fetchall()
             ]
+
+    def backup_database(self) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = self.db_path.with_name(f"{self.db_path.stem}-backup-{timestamp}{self.db_path.suffix}")
+        shutil.copy2(self.db_path, target)
+        LOGGER.info("Database backed up to %s", target)
+        return target
+
+    def export_tasks(self, path: Path) -> Path:
+        activities = self.get_activities()
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(
+                fh, fieldnames=["name", "description", "default_target_hours", "tags", "is_active"]
+            )
+            writer.writeheader()
+            for act in activities:
+                writer.writerow(
+                    {
+                        "name": act.name,
+                        "description": act.description,
+                        "default_target_hours": act.default_target_hours,
+                        "tags": act.tags,
+                        "is_active": int(act.is_active),
+                    }
+                )
+        LOGGER.info("Exported %s activities to %s", len(activities), path)
+        return path
+
+    def import_tasks(self, path: Path) -> int:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(path)
+        imported = 0
+        if path.suffix.lower() == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            rows = data if isinstance(data, list) else data.get("tasks", [])
+        else:
+            with path.open("r", newline="", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                rows = list(reader)
+        for row in rows:
+            name = row.get("name") if isinstance(row, dict) else None
+            if not name:
+                continue
+            description = row.get("description", "") if isinstance(row, dict) else ""
+            target = float(row.get("default_target_hours", 0) or 0)
+            tags = row.get("tags", "") if isinstance(row, dict) else ""
+            try:
+                self.create_activity(name, description=description, default_target_hours=target, tags=tags)
+                imported += 1
+            except sqlite3.IntegrityError:
+                LOGGER.info("Skipped duplicate task %s during import", name)
+        LOGGER.info("Imported %s tasks from %s", imported, path)
+        return imported
