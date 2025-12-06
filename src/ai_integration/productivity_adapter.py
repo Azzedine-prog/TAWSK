@@ -140,6 +140,8 @@ def _build_frame(
             *rest,
         ) = entry
         comments = rest[0] if rest else ""
+        plan_total = rest[1] if len(rest) > 1 else target_hours or 0.0
+        plan_days = rest[2] if len(rest) > 2 else 1
         entry_dt = _normalize_date(entry_date)
         rows.append(
             {
@@ -148,6 +150,8 @@ def _build_frame(
                 "task": activity_name,
                 "duration_hours": hours or 0.0,
                 "target_hours": target_hours or 0.0,
+                "plan_total_hours": plan_total,
+                "plan_days": plan_days,
                 "completion_percent": completion_percent or 0.0,
                 "objectives": objectives or "",
                 "stop_reason": stop_reason or "",

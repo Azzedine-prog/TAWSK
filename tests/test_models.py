@@ -13,13 +13,15 @@ def test_activity_from_row():
 
 
 def test_daily_entry_from_row():
-    row = (1, "2024-01-01", 2, 1.5, "Objective", 2.0, 80.0, "reason")
+    row = (1, "2024-01-01", 2, 1.5, "Objective", 2.0, 80.0, "reason", "", 6.0, 3)
     entry = DailyEntry.from_row(row)
     assert entry.date == date(2024, 1, 1)
     assert entry.duration_hours == 1.5
     assert entry.target_hours == 2.0
     assert entry.completion_percent == 80.0
     assert entry.stop_reason == "reason"
+    assert entry.plan_total_hours == 6.0
+    assert entry.plan_days == 3
 
 
 def test_daily_entry_from_row_handles_nulls():
@@ -29,3 +31,5 @@ def test_daily_entry_from_row_handles_nulls():
     assert entry.target_hours == 0.0
     assert entry.completion_percent == 0.0
     assert entry.stop_reason == ""
+    assert entry.plan_total_hours == 0.0
+    assert entry.plan_days == 1

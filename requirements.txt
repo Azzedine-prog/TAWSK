@@ -10,3 +10,4 @@ tensorflow-cpu
 numpy
 scikit-learn
 joblib
+ics

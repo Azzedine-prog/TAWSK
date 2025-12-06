@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -15,6 +15,12 @@ import wx
 import wx.adv
 import wx.aui
 import wx.lib.agw.ribbon as RB
+import wx.lib.scrolledpanel as scrolled
+
+try:
+    from ics import Calendar, Event
+except Exception:  # pragma: no cover - optional dependency
+    Calendar = Event = None
 
 from tracker_app.core.ai_service import AIAssistantService
 from tracker_app.tracker.controllers import AppController, ConfigManager, CONFIG_DIR
@@ -756,7 +762,10 @@ class MainPanel(wx.ScrolledWindow):
         self.controller = controller
         self.config_manager = config_manager
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
+        self.saved_layout: str = config_manager.config.last_layout
         self.active_targets: Dict[int, float] = {}
+        self.plan_totals: Dict[int, float] = {}
+        self.plan_days: Dict[int, int] = {}
         self.mgr: Optional[wx.aui.AuiManager] = None
         self.current_user_id = "default-user"
         self.task_windows: Dict[int, "TaskFrame"] = {}
@@ -1103,8 +1112,26 @@ class MainPanel(wx.ScrolledWindow):
         self.perspectives["Wide stats"] = self.mgr.SavePerspective()
 
         # Restore default (floating trio)
-        self.mgr.LoadPerspective(self.perspectives.get("Floating tasks"))
+        default_layout = self.perspectives.get("Floating tasks")
+        if self.saved_layout:
+            try:
+                self.mgr.LoadPerspective(self.saved_layout)
+            except Exception:
+                LOGGER.warning("Falling back to default layout; saved layout invalid")
+                if default_layout:
+                    self.mgr.LoadPerspective(default_layout)
+        elif default_layout:
+            self.mgr.LoadPerspective(default_layout)
         self.mgr.Update()
+        self.saved_layout = self.mgr.SavePerspective()
+
+    def get_current_layout(self) -> str:
+        if self.mgr:
+            try:
+                return self.mgr.SavePerspective()
+            except Exception:
+                pass
+        return self.saved_layout
 
     def _restore_layout(self, event: Optional[wx.CommandEvent]) -> None:
         """Resurface any hidden panes so users can re-open closed windows."""
@@ -1354,23 +1381,98 @@ class MainPanel(wx.ScrolledWindow):
             wx.MessageBox(f"Goals captured to {path}", "Goals")
 
     def _show_calendar(self, event: wx.CommandEvent) -> None:
-        dlg = wx.Dialog(self, title="Calendar")
+        dlg = wx.Dialog(self, title="Calendar & schedules", size=(520, 520))
+        panel = scrolled.ScrolledPanel(dlg)
+        panel.SetupScrolling()
+        panel.SetBackgroundColour(BACKGROUND)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        cal = wx.adv.CalendarCtrl(dlg)
-        sizer.Add(cal, 1, wx.EXPAND | wx.ALL, 8)
-        list_box = wx.ListBox(dlg)
+
+        cal_style = wx.adv.CAL_SHOW_HOLIDAYS | wx.adv.CAL_SEQUENTIAL_MONTH_SELECTION
+        cal = wx.adv.CalendarCtrl(panel, style=cal_style)
+        sizer.Add(cal, 0, wx.EXPAND | wx.ALL, 8)
+
+        toolbar = wx.BoxSizer(wx.HORIZONTAL)
+        export_btn = wx.Button(panel, label="Export ICS")
+        import_btn = wx.Button(panel, label="Import ICS")
+        toolbar.Add(export_btn, 0, wx.ALL, 4)
+        toolbar.Add(import_btn, 0, wx.ALL, 4)
+        sizer.Add(toolbar, 0, wx.ALL, 4)
+
+        list_box = wx.ListBox(panel)
         sizer.Add(list_box, 1, wx.EXPAND | wx.ALL, 8)
 
-        def on_day_changed(_evt):
-            chosen = cal.GetDate().FormatISODate()
-            day = date.fromisoformat(chosen)
+        def _refresh_for(day: date) -> None:
             entries = self.controller.storage.get_entries_between(day, day)
             list_box.Clear()
             for row in entries:
-                list_box.Append(f"{row[1]}: {row[2]:.2f}h ({row[3]})")
+                comments = row[7] if len(row) > 7 else ""
+                plan_total = row[8] if len(row) > 8 else 0.0
+                list_box.Append(f"{row[1]}: {row[2]:.2f}h planned {plan_total:.2f}h {comments}")
+
+        def on_day_changed(_evt):
+            chosen = cal.GetDate().FormatISODate()
+            _refresh_for(date.fromisoformat(chosen))
+
+        def on_export(_evt):
+            if Calendar is None:
+                wx.MessageBox("Install 'ics' to export calendar files.", "Calendar export")
+                return
+            path = wx.FileSelector("Export calendar", wildcard="ICS files (*.ics)|*.ics", flags=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+            if not path:
+                return
+            cal_obj = Calendar()
+            entries = self.controller.get_entries_between(date.today() - timedelta(days=30), date.today() + timedelta(days=30))
+            for entry in entries:
+                entry_date, name, duration, objectives, target, *_rest = entry
+                ev = Event()
+                ev.name = str(name)
+                ev.begin = datetime.fromisoformat(str(entry_date))
+                ev.duration = timedelta(hours=target or duration or 1)
+                ev.description = objectives or "Tracked session"
+                cal_obj.events.add(ev)
+            Path(path).write_text(cal_obj.serialize(), encoding="utf-8")
+            wx.MessageBox(f"Exported calendar to {path}", "Calendar export")
+
+        def on_import(_evt):
+            if Calendar is None:
+                wx.MessageBox("Install 'ics' to import calendar files.", "Calendar import")
+                return
+            path = wx.FileSelector("Import calendar", wildcard="ICS files (*.ics)|*.ics", flags=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+            if not path:
+                return
+            data = Path(path).read_text(encoding="utf-8")
+            cal_obj = Calendar(data)
+            for event_obj in cal_obj.events:
+                if not event_obj.begin:
+                    continue
+                act_name = event_obj.name or "Imported task"
+                activity = next((a for a in self.controller.list_activities() if a.name == act_name), None)
+                if activity is None:
+                    activity = self.controller.add_activity(act_name)
+                duration_hours = 0.0
+                if event_obj.duration:
+                    duration_hours = event_obj.duration.total_seconds() / 3600.0
+                self.controller.storage.upsert_daily_entry(
+                    event_obj.begin.date(),
+                    activity.id,
+                    duration_hours_delta=0.0,
+                    objectives_text=event_obj.description or "",
+                    target_hours=duration_hours,
+                    completion_percent=0.0,
+                    stop_reason="Calendar import",
+                    comments="Imported from calendar",
+                    plan_total_hours=duration_hours,
+                    plan_days=1,
+                )
+            wx.MessageBox("Calendar imported", "Calendar import")
+            on_day_changed(None)
 
         cal.Bind(wx.adv.EVT_CALENDAR_SEL_CHANGED, on_day_changed)
-        dlg.SetSizerAndFit(sizer)
+        export_btn.Bind(wx.EVT_BUTTON, on_export)
+        import_btn.Bind(wx.EVT_BUTTON, on_import)
+        panel.SetSizer(sizer)
+        dlg.Layout()
+        _refresh_for(date.today())
         dlg.ShowModal()
         dlg.Destroy()
 
@@ -1581,14 +1683,37 @@ class MainPanel(wx.ScrolledWindow):
         timer_sizer.Add(self.timer_label, 0, wx.EXPAND | wx.ALL, 6)
 
         target_row = wx.BoxSizer(wx.HORIZONTAL)
-        target_row.Add(wx.StaticText(timer_card, label="Plan (hours)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        target_row.Add(wx.StaticText(timer_card, label="Planned duration"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        self.plan_duration_days = wx.SpinCtrl(timer_card, min=0, max=30, initial=0, size=(70, -1))
+        self.plan_duration_days.SetToolTip("Planned days as part of the total duration (optional)")
+        target_row.Add(self.plan_duration_days, 0, wx.ALL, 2)
+        target_row.Add(wx.StaticText(timer_card, label="d"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        self.plan_hours_spin = wx.SpinCtrlDouble(timer_card, min=0, max=72, inc=0.5, initial=1.0, size=(90, -1))
+        self.plan_hours_spin.SetToolTip("Planned hours for the task")
+        target_row.Add(self.plan_hours_spin, 0, wx.ALL, 2)
+        target_row.Add(wx.StaticText(timer_card, label="h"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        self.plan_minutes_spin = wx.SpinCtrl(timer_card, min=0, max=59, initial=0, size=(70, -1))
+        self.plan_minutes_spin.SetToolTip("Add minutes for precise planning")
+        target_row.Add(self.plan_minutes_spin, 0, wx.ALL, 2)
+        target_row.Add(wx.StaticText(timer_card, label="min"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        target_row.AddStretchSpacer()
+        target_row.Add(wx.StaticText(timer_card, label="Spread over"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        self.plan_days_spin = wx.SpinCtrl(timer_card, min=1, max=30, initial=1, size=(70, -1))
+        self.plan_days_spin.SetToolTip("How many days to divide the planned work across")
+        target_row.Add(self.plan_days_spin, 0, wx.ALL, 2)
+        target_row.Add(wx.StaticText(timer_card, label="day(s)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        self.per_day_label = wx.StaticText(timer_card, label="Per-day: 1.00h")
+        self.per_day_label.SetForegroundColour(TEXT_ON_DARK)
+        target_row.Add(self.per_day_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         self.target_input = wx.SpinCtrlDouble(timer_card, min=0, max=24, inc=0.25, initial=1.0)
-        self.target_input.SetToolTip("Set your target duration for this activity")
-        target_row.Add(self.target_input, 0, wx.ALL, 4)
+        self.target_input.Hide()  # kept for backward compatibility with existing logic
         self.progress = wx.Gauge(timer_card, range=100)
         self.progress.SetToolTip("Progress against the planned hours")
-        target_row.Add(self.progress, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         timer_sizer.Add(target_row, 0, wx.EXPAND)
+        for ctrl in (self.plan_duration_days, self.plan_hours_spin, self.plan_minutes_spin, self.plan_days_spin):
+            ctrl.Bind(wx.EVT_SPINCTRL, self._on_plan_changed)
+        self.plan_hours_spin.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_plan_changed)
+        self._on_plan_changed(None)
 
         today_box = wx.BoxSizer(wx.HORIZONTAL)
         self.today_hours_label = wx.StaticText(timer_card, label="Today: 0.0 h")
@@ -1829,7 +1954,7 @@ class MainPanel(wx.ScrolledWindow):
         self.selected_activity = event.GetData()
         activity = next((a for a in self.controller.list_activities() if a.id == self.selected_activity), None)
         if activity and activity.default_target_hours:
-            self.target_input.SetValue(activity.default_target_hours)
+            self._set_plan_controls(activity.default_target_hours, 1)
         self._load_objectives()
 
     def on_food_break(self, event: wx.CommandEvent) -> None:
@@ -1845,6 +1970,9 @@ class MainPanel(wx.ScrolledWindow):
         activity_id = self._require_selection()
         if activity_id is None:
             return
+        self._ensure_task_window(activity_id)
+
+    def _ensure_task_window(self, activity_id: int) -> None:
         if activity_id in self.task_windows:
             self.task_windows[activity_id].Raise()
             return
@@ -1863,7 +1991,10 @@ class MainPanel(wx.ScrolledWindow):
                 self.today_hours_label.SetLabel(f"Today: {entry.duration_hours:.2f} h")
                 target = entry.target_hours or self.target_input.GetValue()
                 self._update_progress(entry.duration_hours, target)
-
+                plan_total = getattr(entry, "plan_total_hours", target)
+                plan_days = getattr(entry, "plan_days", 1) or 1
+                self._set_plan_controls(plan_total, plan_days)
+            
         self._with_error_dialog("Loading objectives", action)
 
     def on_add_activity(self, event: wx.Event) -> None:
@@ -1914,8 +2045,10 @@ class MainPanel(wx.ScrolledWindow):
         if self.selected_activity is None:
             wx.MessageBox("Select an activity first", "Info")
             return
-        target_hours = self.target_input.GetValue()
+        total_hours, target_hours, plan_days = self._compute_plan_hours()
         self.active_targets[self.selected_activity] = target_hours
+        self.plan_totals[self.selected_activity] = total_hours
+        self.plan_days[self.selected_activity] = plan_days
 
         def tick_cb(elapsed: float) -> None:
             wx.CallAfter(self._update_timer_display, self.selected_activity, elapsed)
@@ -1927,6 +2060,7 @@ class MainPanel(wx.ScrolledWindow):
             "Starting timer",
             lambda: self.controller.start_timer(self.selected_activity, tick_cb, target_hours, on_complete),
         )
+        self._ensure_task_window(self.selected_activity)
 
     def on_pause(self, event: wx.Event) -> None:
         if self.selected_activity is None:
@@ -1959,6 +2093,48 @@ class MainPanel(wx.ScrolledWindow):
             self.progress.SetValue(percent)
         else:
             self.progress.SetValue(0)
+
+    def _compute_plan_hours(self) -> tuple[float, float, int]:
+        duration_days = max(0, self.plan_duration_days.GetValue()) if hasattr(self, "plan_duration_days") else 0
+        hours = self.plan_hours_spin.GetValue() if hasattr(self, "plan_hours_spin") else 0.0
+        minutes = self.plan_minutes_spin.GetValue() if hasattr(self, "plan_minutes_spin") else 0
+        total_hours = duration_days * 24 + hours + (minutes / 60.0)
+        plan_days = max(1, self.plan_days_spin.GetValue()) if hasattr(self, "plan_days_spin") else 1
+        per_day = total_hours / plan_days if plan_days else total_hours
+        if hasattr(self, "target_input"):
+            self.target_input.SetValue(per_day)
+        if hasattr(self, "per_day_label"):
+            self.per_day_label.SetLabel(f"Per-day: {per_day:.2f}h")
+        return total_hours, per_day, plan_days
+
+    def _set_plan_controls(self, total_hours: float, plan_days: int) -> None:
+        plan_days = max(1, int(plan_days or 1))
+        total_hours = max(0.0, total_hours)
+        day_component = int(total_hours // 24)
+        remainder = total_hours - (day_component * 24)
+        hour_component = int(remainder)
+        minute_component = int(round((remainder - hour_component) * 60))
+        if minute_component == 60:
+            hour_component += 1
+            minute_component = 0
+        if hour_component >= 24:
+            day_component += hour_component // 24
+            hour_component = hour_component % 24
+        for setter, value in (
+            (self.plan_duration_days.SetValue, day_component),
+            (self.plan_hours_spin.SetValue, float(hour_component)),
+            (self.plan_minutes_spin.SetValue, minute_component),
+            (self.plan_days_spin.SetValue, plan_days),
+        ):
+            setter(value)
+        self._on_plan_changed(None)
+
+    def _on_plan_changed(self, _event: Optional[wx.Event]) -> None:
+        total_hours, per_day, _plan_days = self._compute_plan_hours()
+        if self.selected_activity is not None:
+            self.active_targets[self.selected_activity] = per_day
+            self.plan_totals[self.selected_activity] = total_hours
+            self.plan_days[self.selected_activity] = max(1, self.plan_days_spin.GetValue())
 
     def _handle_timer_complete(self, activity_id: int, elapsed: float) -> None:
         if activity_id != self.selected_activity:
@@ -2027,6 +2203,8 @@ class MainPanel(wx.ScrolledWindow):
             self.controller.timers.stop(activity_id)
             return
         objectives, completion_percent, stop_reason, comments = dialog.get_values()
+        plan_total = self.plan_totals.get(activity_id, target_hours * self.plan_days.get(activity_id, 1))
+        plan_days = self.plan_days.get(activity_id, 1)
         result = self._with_error_dialog(
             "Saving session",
             lambda: self.controller.finalize_timer(
@@ -2034,6 +2212,8 @@ class MainPanel(wx.ScrolledWindow):
                 objectives,
                 target_hours,
                 completion_percent,
+                plan_total_hours=plan_total,
+                plan_days=plan_days,
                 comments=comments,
                 stop_reason=stop_reason,
             ),
@@ -2129,8 +2309,10 @@ class TaskFrame(wx.Frame):
             self.progress.SetValue(0)
 
     def on_start(self, event: wx.CommandEvent) -> None:
-        target_hours = self.target_input.GetValue()
+        total_hours, target_hours, plan_days = self.main_panel._compute_plan_hours()
         self.main_panel.active_targets[self.activity_id] = target_hours
+        self.main_panel.plan_totals[self.activity_id] = total_hours
+        self.main_panel.plan_days[self.activity_id] = plan_days
 
         def tick_cb(elapsed: float) -> None:
             wx.CallAfter(self._update_display, elapsed)
@@ -2168,7 +2350,8 @@ class StudyTrackerFrame(wx.Frame):
         width, height = self.GetSize()
         cfg.last_window_width, cfg.last_window_height = width, height
         selection = self.main_panel.selected_activity
-        self.controller.save_config(selection)
+        layout = self.main_panel.get_current_layout()
+        self.controller.save_config(selection, layout=layout)
         if self.main_panel.mgr:
             self.main_panel.mgr.UnInit()
         event.Skip()

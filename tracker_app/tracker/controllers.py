@@ -31,6 +31,7 @@ class AppConfig:
     last_window_width: int
     last_window_height: int
     last_selected_activity: Optional[int] = None
+    last_layout: str = ""
 
     @classmethod
     def from_toml(cls, data: dict) -> "AppConfig":
@@ -49,6 +50,7 @@ class AppConfig:
             last_window_width=int(data.get("last_window_width", 1000)),
             last_window_height=int(data.get("last_window_height", 700)),
             last_selected_activity=last_activity,
+            last_layout=data.get("last_layout", ""),
         )
 
     def to_toml(self) -> str:
@@ -63,6 +65,7 @@ class AppConfig:
             f"last_window_width = {self.last_window_width}",
             f"last_window_height = {self.last_window_height}",
             f"last_selected_activity = {last_activity_value}",
+            f"last_layout = \"{self.last_layout}\"",
         ]
         return "\n".join(lines) + "\n"
 
@@ -164,6 +167,8 @@ class AppController:
         completion_percent: float,
         comments: str = "",
         stop_reason: str = "",
+        plan_total_hours: float = 0.0,
+        plan_days: int = 1,
     ) -> float:
         timer = self.timers.stop(activity_id)
         elapsed = timer.current_elapsed()
@@ -177,6 +182,8 @@ class AppController:
             completion_percent=completion_percent,
             stop_reason=stop_reason,
             comments=comments,
+            plan_total_hours=plan_total_hours,
+            plan_days=plan_days,
         )
         return elapsed
 
@@ -340,9 +347,11 @@ class AppController:
         ]
         return self.exporter.export(entries, stat_rows)
 
-    def save_config(self, last_activity: Optional[int]) -> None:
+    def save_config(self, last_activity: Optional[int], layout: Optional[str] = None) -> None:
         cfg = self.config_manager.config
         cfg.last_selected_activity = last_activity
+        if layout is not None:
+            cfg.last_layout = layout
         self.config_manager.save(cfg)
 
     def backup_database(self) -> Path:

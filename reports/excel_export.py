@@ -18,8 +18,38 @@ class ExcelExporter:
 
     def export(self, entries: Iterable[Tuple], stats: Iterable) -> Path:
         """Export entries and stats to Excel, deduplicating by date + activity."""
+        normalized = []
+        for entry in entries:
+            (
+                entry_date,
+                activity,
+                duration,
+                objectives,
+                target,
+                completion,
+                stop_reason,
+                comments,
+                *rest,
+            ) = entry
+            plan_total = rest[0] if len(rest) > 0 else 0.0
+            plan_days = rest[1] if len(rest) > 1 else 1
+            normalized.append(
+                (
+                    entry_date,
+                    activity,
+                    duration,
+                    objectives,
+                    target,
+                    completion,
+                    stop_reason,
+                    comments,
+                    plan_total,
+                    plan_days,
+                )
+            )
+
         raw_df = pd.DataFrame(
-            entries,
+            normalized,
             columns=[
                 "Date",
                 "Activity",
@@ -29,6 +59,8 @@ class ExcelExporter:
                 "CompletionPercent",
                 "StopReason",
                 "Comments",
+                "PlanTotalHours",
+                "PlanDays",
             ],
         )
         raw_df["Date"] = pd.to_datetime(raw_df["Date"]).dt.date

@@ -64,6 +64,8 @@ class Storage:
                     completion_percent REAL NOT NULL DEFAULT 0,
                     stop_reason TEXT,
                     comments TEXT,
+                    plan_total_hours REAL NOT NULL DEFAULT 0,
+                    plan_days INTEGER NOT NULL DEFAULT 1,
                     UNIQUE(date, activity_id),
                     FOREIGN KEY(activity_id) REFERENCES activities(id)
                 )
@@ -87,6 +89,8 @@ class Storage:
         _add_column("completion_percent", "REAL NOT NULL DEFAULT 0")
         _add_column("stop_reason", "TEXT")
         _add_column("comments", "TEXT")
+        _add_column("plan_total_hours", "REAL NOT NULL DEFAULT 0")
+        _add_column("plan_days", "INTEGER NOT NULL DEFAULT 1")
         _add_column("description", "TEXT", table="activities")
         _add_column("default_target_hours", "REAL NOT NULL DEFAULT 0", table="activities")
         _add_column("tags", "TEXT", table="activities")
@@ -165,7 +169,7 @@ class Storage:
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT id, date, activity_id, duration_hours, objectives_succeeded, target_hours, completion_percent, stop_reason, comments
+                SELECT id, date, activity_id, duration_hours, objectives_succeeded, target_hours, completion_percent, stop_reason, comments, plan_total_hours, plan_days
                 FROM daily_entries WHERE date = ? AND activity_id = ?
                 """,
                 (entry_date.isoformat(), activity_id),
@@ -183,6 +187,8 @@ class Storage:
         completion_percent: Optional[float] = None,
         stop_reason: Optional[str] = None,
         comments: Optional[str] = None,
+        plan_total_hours: Optional[float] = None,
+        plan_days: Optional[int] = None,
     ) -> DailyEntry:
         """Add or update the daily entry for the activity and date."""
         with self._get_conn() as conn:
@@ -191,17 +197,23 @@ class Storage:
             if existing:
                 new_duration = existing.duration_hours + duration_hours_delta
                 new_objectives = objectives_text if objectives_text is not None else existing.objectives_succeeded
-                new_target = (existing.target_hours or 0.0) + ((target_hours or 0.0) if target_hours is not None else 0.0)
+                if plan_total_hours is None and target_hours is not None:
+                    new_target = (existing.target_hours or 0.0) + target_hours
+                else:
+                    new_target = target_hours if target_hours is not None else existing.target_hours
                 new_percent = completion_percent if completion_percent is not None else existing.completion_percent
                 new_reason = stop_reason if stop_reason is not None else existing.stop_reason
                 new_comments = comments if comments is not None else getattr(existing, "comments", "")
+                fallback_plan = target_hours if target_hours is not None else getattr(existing, "target_hours", 0.0)
+                new_plan_total = plan_total_hours if plan_total_hours is not None else getattr(existing, "plan_total_hours", fallback_plan)
+                new_plan_days = plan_days if plan_days is not None else getattr(existing, "plan_days", 1)
                 cur.execute(
                     """
                     UPDATE daily_entries
-                    SET duration_hours = ?, objectives_succeeded = ?, target_hours = ?, completion_percent = ?, stop_reason = ?, comments = ?
+                    SET duration_hours = ?, objectives_succeeded = ?, target_hours = ?, completion_percent = ?, stop_reason = ?, comments = ?, plan_total_hours = ?, plan_days = ?
                     WHERE id = ?
                     """,
-                    (new_duration, new_objectives, new_target, new_percent, new_reason, new_comments, existing.id),
+                    (new_duration, new_objectives, new_target, new_percent, new_reason, new_comments, new_plan_total, new_plan_days, existing.id),
                 )
                 LOGGER.debug("Updated entry for %s %s", entry_date, activity_id)
                 return DailyEntry(
@@ -214,11 +226,13 @@ class Storage:
                     completion_percent=new_percent,
                     stop_reason=new_reason,
                     comments=new_comments,
+                    plan_total_hours=new_plan_total,
+                    plan_days=new_plan_days,
                 )
             cur.execute(
                 """
-                INSERT INTO daily_entries (date, activity_id, duration_hours, objectives_succeeded, target_hours, completion_percent, stop_reason, comments)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO daily_entries (date, activity_id, duration_hours, objectives_succeeded, target_hours, completion_percent, stop_reason, comments, plan_total_hours, plan_days)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_date.isoformat(),
@@ -229,6 +243,8 @@ class Storage:
                     completion_percent or 0.0,
                     stop_reason or "",
                     comments or "",
+                    plan_total_hours if plan_total_hours is not None else (target_hours or 0.0),
+                    plan_days or 1,
                 ),
             )
             entry_id = cur.lastrowid
@@ -243,6 +259,8 @@ class Storage:
                 completion_percent=completion_percent or 0.0,
                 stop_reason=stop_reason or "",
                 comments=comments or "",
+                plan_total_hours=plan_total_hours or 0.0,
+                plan_days=plan_days or 1,
             )
 
     def get_daily_entries_by_date(self, entry_date: date) -> List[DailyEntry]:
@@ -250,19 +268,19 @@ class Storage:
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT id, date, activity_id, duration_hours, objectives_succeeded, target_hours, completion_percent, stop_reason, comments
+                SELECT id, date, activity_id, duration_hours, objectives_succeeded, target_hours, completion_percent, stop_reason, comments, plan_total_hours, plan_days
                 FROM daily_entries WHERE date = ?
                 """,
                 (entry_date.isoformat(),),
             )
             return [DailyEntry.from_row(row) for row in cur.fetchall()]
 
-    def get_entries_between(self, start_date: date, end_date: date) -> List[Tuple[str, str, float, str, float, float, str, str]]:
+    def get_entries_between(self, start_date: date, end_date: date) -> List[Tuple[str, str, float, str, float, float, str, str, float, int]]:
         with self._get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT de.date, a.name, de.duration_hours, de.objectives_succeeded, de.target_hours, de.completion_percent, de.stop_reason, de.comments
+                SELECT de.date, a.name, de.duration_hours, de.objectives_succeeded, de.target_hours, de.completion_percent, de.stop_reason, de.comments, de.plan_total_hours, de.plan_days
                 FROM daily_entries de
                 JOIN activities a ON a.id = de.activity_id
                 WHERE de.date BETWEEN ? AND ?

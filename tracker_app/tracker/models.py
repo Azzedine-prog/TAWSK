@@ -46,6 +46,8 @@ class DailyEntry:
     completion_percent: float = 0.0
     stop_reason: str = ""
     comments: str = ""
+    plan_total_hours: float = 0.0
+    plan_days: int = 1
 
     @classmethod
     def from_row(cls, row: tuple) -> "DailyEntry":
@@ -55,6 +57,8 @@ class DailyEntry:
         completion_percent = row[6] if len(row) > 6 and row[6] is not None else 0.0
         stop_reason = row[7] if len(row) > 7 and row[7] is not None else ""
         comments = row[8] if len(row) > 8 and row[8] is not None else ""
+        plan_total_hours = row[9] if len(row) > 9 and row[9] is not None else target_hours
+        plan_days = row[10] if len(row) > 10 and row[10] is not None else 1
         return cls(
             id=row[0],
             date=parsed_date,
@@ -65,6 +69,8 @@ class DailyEntry:
             completion_percent=completion_percent,
             stop_reason=stop_reason,
             comments=comments,
+            plan_total_hours=plan_total_hours,
+            plan_days=plan_days,
         )
 
 
