@@ -127,7 +127,19 @@ def _build_frame(
         return None
     entries = storage.get_entries_between(start, end)
     rows: List[dict] = []
-    for entry_date, activity_name, hours, objectives, target_hours, completion_percent, stop_reason in entries:
+    for entry in entries:
+        # Storage may return extra columns (e.g., comments) as the schema evolves.
+        (
+            entry_date,
+            activity_name,
+            hours,
+            objectives,
+            target_hours,
+            completion_percent,
+            stop_reason,
+            *rest,
+        ) = entry
+        comments = rest[0] if rest else ""
         entry_dt = _normalize_date(entry_date)
         rows.append(
             {
@@ -139,6 +151,7 @@ def _build_frame(
                 "completion_percent": completion_percent or 0.0,
                 "objectives": objectives or "",
                 "stop_reason": stop_reason or "",
+                "comments": comments or "",
                 "category": "General",
             }
         )
