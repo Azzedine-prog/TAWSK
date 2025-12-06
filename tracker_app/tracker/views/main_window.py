@@ -747,6 +747,31 @@ class MainPanel(wx.ScrolledWindow):
         panel.SetSizer(sizer)
         return panel, sizer
 
+    def _build_ribbon(self) -> wx.ToolBar:
+        """Create a toolbar-style ribbon for quick access to panes and actions."""
+        ribbon = wx.ToolBar(self, style=wx.TB_HORIZONTAL | wx.TB_TEXT | wx.TB_FLAT)
+        ribbon.SetToolBitmapSize((24, 24))
+        ribbon.SetToolSeparation(6)
+
+        def add_tool(label: str, art: str, handler, help_str: str) -> None:
+            tool_id = wx.NewIdRef()
+            bitmap = wx.ArtProvider.GetBitmap(art, wx.ART_TOOLBAR, (24, 24))
+            ribbon.AddTool(tool_id, label, bitmap, help=help_str)
+            self.Bind(wx.EVT_TOOL, handler, id=tool_id)
+
+        add_tool("Activities", wx.ART_LIST_VIEW, lambda evt: self._show_pane("activities", dock=True), "Show the activities pane")
+        add_tool("Timer", wx.ART_REPORT_VIEW, lambda evt: self._show_pane("session", dock=True), "Show the focus timer")
+        add_tool("Insights", wx.ART_NORMAL_FILE, lambda evt: self._show_pane("insights", dock=True), "Open Today/History/Stats tab")
+        add_tool("Objectives", wx.ART_TIP, lambda evt: self._show_pane("objectives", floatable=True), "Open objectives & notes")
+        add_tool("Charts", wx.ART_FIND, lambda evt: self._show_pane("stats_charts", floatable=True), "Show floating charts")
+        add_tool("Guide", wx.ART_HELP, lambda evt: self._show_pane("guide", floatable=True), "Open help & motivation")
+        add_tool("Export", wx.ART_FILE_SAVE, self._ribbon_export, "Export Excel report for the active range")
+        add_tool("AI plan", wx.ART_EXECUTABLE_FILE, self._handle_ai_assist, "Ask AI to plan and prioritize")
+        add_tool("Task window", wx.ART_GO_FORWARD, self._open_task_window_from_ribbon, "Pop out the selected task as its own window")
+        add_tool("Restore", wx.ART_UNDO, self._restore_layout, "Show any hidden panes")
+        ribbon.Realize()
+        return ribbon
+
     def _build_ui(self) -> None:
         self.SetBackgroundColour(BACKGROUND)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -770,7 +795,8 @@ class MainPanel(wx.ScrolledWindow):
         self.layout_choice = wx.Choice(
             header, choices=["Balanced grid", "Focus timer", "Wide stats", "Floating tasks"]
         )
-        self.layout_choice.SetSelection(0)
+        # Default to the floating, minimal trio layout so key panes are visible side by side
+        self.layout_choice.SetSelection(3)
         self.layout_choice.Bind(wx.EVT_CHOICE, self.on_layout_choice)
         self.layout_choice.SetToolTip("Switch between preset docked layouts")
         help_btn = wx.Button(header, label="Help")
@@ -804,6 +830,9 @@ class MainPanel(wx.ScrolledWindow):
         header_sizer.Add(help_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
+
+        ribbon = self._build_ribbon()
+        main_sizer.Add(ribbon, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
 
         dock_host = wx.Panel(self)
         dock_host.SetBackgroundColour(BACKGROUND)
@@ -901,53 +930,68 @@ class MainPanel(wx.ScrolledWindow):
             .Float()
             .Show(True),
         )
+        self._capture_layouts()
+
+    def _capture_layouts(self) -> None:
+        """Create perspectives with a minimal floating default of three panes."""
+        assert self.mgr is not None
+        panes = ["activities", "session", "insights", "objectives", "stats_charts", "guide"]
+
+        # Default: three visible panes side by side (floating-capable)
+        for name in panes:
+            pane = self.mgr.GetPane(name)
+            if pane.IsOk():
+                pane.Show(name in {"activities", "session", "insights"})
+        self.mgr.GetPane("activities").Left().BestSize(320, 520)
+        self.mgr.GetPane("session").CenterPane().BestSize(520, 340)
+        self.mgr.GetPane("insights").Right().BestSize(520, 440)
+        self.mgr.GetPane("objectives").Bottom().BestSize(480, 220)
+        self.mgr.GetPane("stats_charts").Float().BestSize(640, 460)
+        self.mgr.GetPane("guide").Float().BestSize(480, 180)
         self.mgr.Update()
-        self.perspectives = {
-            "Balanced grid": self.mgr.SavePerspective(),
-        }
+        self.perspectives = {"Floating tasks": self.mgr.SavePerspective()}
+
+        # Balanced grid: keep objectives visible, charts floating
+        for name in panes:
+            pane = self.mgr.GetPane(name)
+            if pane.IsOk():
+                pane.Show(name in {"activities", "session", "insights", "objectives"})
+        self.mgr.GetPane("stats_charts").Float().Show(True)
+        self.mgr.GetPane("guide").Bottom().Show(True)
+        self.mgr.Update()
+        self.perspectives["Balanced grid"] = self.mgr.SavePerspective()
 
         # Focused timer layout
-        self.mgr.GetPane("activities").Left().BestSize(220, 500)
-        self.mgr.GetPane("insights").Bottom().BestSize(700, 260)
-        self.mgr.GetPane("objectives").Right().BestSize(360, 260)
-        self.mgr.GetPane("stats_charts").Float().BestSize(520, 420)
+        self.mgr.GetPane("activities").Left().BestSize(220, 500).Show(True)
+        self.mgr.GetPane("insights").Bottom().BestSize(700, 260).Show(True)
+        self.mgr.GetPane("objectives").Right().BestSize(360, 260).Show(True)
+        self.mgr.GetPane("stats_charts").Float().BestSize(520, 420).Show(False)
+        self.mgr.GetPane("guide").Show(False)
         self.mgr.Update()
         self.perspectives["Focus timer"] = self.mgr.SavePerspective()
 
         # Stats-heavy layout
-        self.mgr.GetPane("activities").Right().BestSize(200, 400)
-        self.mgr.GetPane("insights").CenterPane()
-        self.mgr.GetPane("session").Top().BestSize(520, 220)
-        self.mgr.GetPane("objectives").Bottom().BestSize(520, 180)
+        self.mgr.GetPane("activities").Right().BestSize(200, 400).Show(True)
+        self.mgr.GetPane("insights").CenterPane().Show(True)
+        self.mgr.GetPane("session").Top().BestSize(520, 220).Show(True)
+        self.mgr.GetPane("objectives").Bottom().BestSize(520, 180).Show(True)
         self.mgr.GetPane("stats_charts").Right().BestSize(620, 420).Show(True)
+        self.mgr.GetPane("guide").Show(False)
         self.mgr.Update()
         self.perspectives["Wide stats"] = self.mgr.SavePerspective()
 
-        # Floating, Vector Canoe-inspired layout where panes feel like modular instruments
-        self.mgr.GetPane("activities").Left().Floatable(True).Caption("Activities dock")
-        self.mgr.GetPane("session").Float().BestSize(480, 240).Caption("Timer module")
-        # Use floating position to avoid AUI argument errors on some platforms
-        self.mgr.GetPane("objectives").Float().FloatingPosition(420, 320).BestSize(420, 220)
-        self.mgr.GetPane("insights").Right().Floatable(True).BestSize(500, 400)
-        self.mgr.GetPane("stats_charts").Float().BestSize(640, 460).Show(True)
-        self.mgr.GetPane("guide").Bottom().Floatable(True).BestSize(500, 180)
-        self.mgr.Update()
-        self.perspectives["Floating tasks"] = self.mgr.SavePerspective()
-
-        # Restore default to floating-first experience
-        self.mgr.LoadPerspective(self.perspectives.get("Floating tasks", self.perspectives["Balanced grid"]))
+        # Restore default (floating trio)
+        self.mgr.LoadPerspective(self.perspectives.get("Floating tasks"))
         self.mgr.Update()
 
     def _restore_layout(self, event: Optional[wx.CommandEvent]) -> None:
         """Resurface any hidden panes so users can re-open closed windows."""
         if not self.mgr:
             return
-        for name in ["activities", "session", "objectives", "insights", "stats_charts", "guide"]:
-            pane = self.mgr.GetPane(name)
-            if pane.IsOk():
-                pane.Show(True)
-                pane.Float()
-        self.mgr.Update()
+        for name in ["activities", "session", "insights"]:
+            self._show_pane(name, dock=True)
+        for name in ["objectives", "stats_charts", "guide"]:
+            self._show_pane(name, floatable=True)
 
     def _on_reset_layout(self, event: Optional[wx.CommandEvent]) -> None:
         if self.mgr and getattr(self, "perspectives", None):
@@ -955,12 +999,45 @@ class MainPanel(wx.ScrolledWindow):
             if target:
                 self.mgr.LoadPerspective(target)
                 self.mgr.Update()
+                idx = self.layout_choice.FindString("Floating tasks")
+                if idx != wx.NOT_FOUND:
+                    self.layout_choice.SetSelection(idx)
 
     def on_layout_choice(self, event: wx.CommandEvent) -> None:
         choice = self.layout_choice.GetStringSelection()
         if self.mgr and choice in getattr(self, "perspectives", {}):
             self.mgr.LoadPerspective(self.perspectives[choice])
             self.mgr.Update()
+
+    def _show_pane(self, name: str, dock: bool = False, floatable: bool = False) -> None:
+        if not self.mgr:
+            return
+        pane = self.mgr.GetPane(name)
+        if not pane.IsOk():
+            return
+        pane.Show(True)
+        if dock:
+            pane.Dock()
+        if floatable and pane.IsFloatable():
+            pane.Float()
+        self.mgr.Update()
+
+    def _ribbon_export(self, event: wx.CommandEvent) -> None:
+        try:
+            start = date.today() - timedelta(days=29)
+            end = date.today()
+            path = self.controller.export_to_excel(start, end)
+            wx.MessageBox(f"Exported statistics to {path}", "Export complete")
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Ribbon export failed")
+            wx.MessageBox(
+                f"Excel export failed.\n\n{exc}\nClose any open Excel file and verify write access.",
+                "Export error",
+                style=wx.ICON_ERROR,
+            )
+
+    def _open_task_window_from_ribbon(self, event: wx.CommandEvent) -> None:
+        self.on_open_task_window(event)
 
     def _handle_ai_assist(self, event: wx.CommandEvent) -> None:
         selected = self._require_selection()
