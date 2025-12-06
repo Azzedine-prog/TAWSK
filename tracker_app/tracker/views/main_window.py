@@ -20,10 +20,10 @@ from tracker_app.core.ai_service import AIAssistantService
 from tracker_app.tracker.controllers import AppController, ConfigManager, CONFIG_DIR
 
 LOGGER = logging.getLogger(__name__)
-PRIMARY = "#1F2937"  # modern deep gray header
-SECONDARY = "#4A90E2"  # vibrant blue
-ACCENT = "#50E3C2"  # mint accent
-BACKGROUND = "#F7F9FC"
+PRIMARY = "#2564CF"  # Outlook-like ribbon blue
+SECONDARY = "#5E9BFF"  # supporting accent blue
+ACCENT = "#2ECC71"  # success mint
+BACKGROUND = "#F4F6FA"
 SURFACE = "#FFFFFF"
 CARD = "#FFFFFF"
 TEXT_ON_DARK = "#2D3436"
@@ -286,13 +286,14 @@ class StatsPanel(wx.Panel):
             )
 
 
-class StatsChartsPanel(wx.Panel):
+class StatsChartsPanel(wx.ScrolledWindow):
     """Floating chart canvas to highlight multiple time-management visuals."""
 
     def __init__(self, parent: wx.Window, controller: AppController):
-        super().__init__(parent)
+        super().__init__(parent, style=wx.VSCROLL | wx.HSCROLL)
         self.controller = controller
         self.manager: Optional[wx.aui.AuiManager] = None
+        self.SetScrollRate(10, 10)
         self._build_ui()
 
     def attach_manager(self, manager: wx.aui.AuiManager) -> None:
@@ -606,6 +607,7 @@ class StatsChartsPanel(wx.Panel):
         main.Add(self.advice, 0, wx.ALL, 6)
 
         self.SetSizer(main)
+        self.Layout()
 
 
 class OutcomeDialog(wx.Dialog):
