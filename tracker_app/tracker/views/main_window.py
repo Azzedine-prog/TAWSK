@@ -127,9 +127,10 @@ class HistoryPanel(wx.Panel):
 class StatsPanel(wx.Panel):
     """Tab for aggregated statistics and chart rendering."""
 
-    def __init__(self, parent: wx.Window, controller: AppController):
+    def __init__(self, parent: wx.Window, controller: AppController, charts_panel: "StatsChartsPanel"):
         super().__init__(parent)
         self.controller = controller
+        self.charts_panel = charts_panel
         self._build_ui()
 
     def _date_range(self):
@@ -148,11 +149,13 @@ class StatsPanel(wx.Panel):
         try:
             start, end = self._date_range()
             stats = self.controller.get_stats(start, end)
+            entries = self.controller.get_entries_between(start, end)
             kpis = self.controller.get_kpis(start, end)
             if not stats:
                 self.kpi_text.SetLabel("No data in selected range.")
                 self.analysis_text.SetLabel("Track a session to see charts and KPIs here.")
                 self.chart_bitmap.SetBitmap(wx.NullBitmap)
+                self.charts_panel.clear()
                 return
             total_hours = sum(s.total_hours for s in stats)
             days = (end - start).days + 1
@@ -211,6 +214,9 @@ class StatsPanel(wx.Panel):
                 bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
                 self.chart_bitmap.SetBitmap(bitmap)
             plt.close(fig)
+
+            self.charts_panel.update_charts(stats, entries, kpis, start, end)
+            self.charts_panel.present()
         except Exception as exc:  # pragma: no cover - UI path
             LOGGER.exception("Statistics refresh failed")
             wx.MessageBox(
@@ -218,6 +224,147 @@ class StatsPanel(wx.Panel):
                 "Statistics error",
                 style=wx.ICON_ERROR,
             )
+
+
+class StatsChartsPanel(wx.Panel):
+    """Floating chart canvas to highlight multiple time-management visuals."""
+
+    def __init__(self, parent: wx.Window, controller: AppController):
+        super().__init__(parent)
+        self.controller = controller
+        self.manager: Optional[wx.aui.AuiManager] = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.SetBackgroundColour(SURFACE)
+        main = wx.BoxSizer(wx.VERTICAL)
+        header = wx.StaticText(self, label="Time management visuals")
+        header.SetForegroundColour(TEXT_ON_DARK)
+        main.Add(header, 0, wx.ALL, 6)
+
+        self.chart_hours = wx.StaticBitmap(self)
+        self.chart_planned = wx.StaticBitmap(self)
+        self.chart_focus = wx.StaticBitmap(self)
+        self.chart_category = wx.StaticBitmap(self)
+
+        for label_text, bitmap in (
+            ("Hours by activity", self.chart_hours),
+            ("Planned vs actual", self.chart_planned),
+            ("Focus trend", self.chart_focus),
+            ("Category mix", self.chart_category),
+        ):
+            box = wx.StaticBox(self, label=label_text)
+            box.SetForegroundColour(TEXT_ON_DARK)
+            sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
+            sizer.Add(bitmap, 1, wx.EXPAND | wx.ALL, 4)
+            main.Add(sizer, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.advice = wx.StaticText(self, label="Charts will appear after refresh.")
+        self.advice.SetForegroundColour(MUTED)
+        main.Add(self.advice, 0, wx.ALL, 6)
+
+        self.SetSizer(main)
+
+    def attach_manager(self, manager: wx.aui.AuiManager) -> None:
+        self.manager = manager
+
+    def present(self) -> None:
+        if not self.manager:
+            return
+        pane = self.manager.GetPane(self)
+        if pane.IsOk():
+            pane.Show(True)
+            if not pane.IsFloating():
+                pane.Float()
+            self.manager.Update()
+
+    def clear(self) -> None:
+        for bitmap in (self.chart_hours, self.chart_planned, self.chart_focus, self.chart_category):
+            bitmap.SetBitmap(wx.NullBitmap)
+        self.advice.SetLabel("No data yet. Track time and refresh statistics.")
+
+    def _to_bitmap(self, fig) -> wx.Bitmap:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            fig.savefig(tmp.name, bbox_inches="tight")
+            bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
+        plt.close(fig)
+        return bitmap
+
+    def update_charts(self, stats, entries, kpis, start: date, end: date) -> None:
+        if not stats:
+            self.clear()
+            return
+
+        try:
+            # Hours by activity
+            fig1, ax1 = plt.subplots(figsize=(5, 3))
+            bars = ax1.bar([s.activity_name for s in stats], [s.total_hours for s in stats], color=SECONDARY)
+            ax1.set_title("Hours by activity")
+            ax1.bar_label(bars, fmt="{:.1f}h")
+            ax1.set_ylabel("Hours")
+            ax1.set_xlabel("Activity")
+            fig1.autofmt_xdate(rotation=25)
+            self.chart_hours.SetBitmap(self._to_bitmap(fig1))
+
+            # Planned vs actual per day
+            per_day_actual: Dict[str, float] = {}
+            per_day_planned: Dict[str, float] = {}
+            for entry_date, _activity, hours, _obj, target, *_rest in entries:
+                per_day_actual[entry_date] = per_day_actual.get(entry_date, 0.0) + (hours or 0.0)
+                per_day_planned[entry_date] = per_day_planned.get(entry_date, 0.0) + (target or 0.0)
+            days_sorted = sorted(per_day_actual.keys())
+            fig2, ax2 = plt.subplots(figsize=(5, 3))
+            ax2.plot(days_sorted, [per_day_actual[d] for d in days_sorted], marker="o", color=SECONDARY, label="Actual")
+            ax2.plot(days_sorted, [per_day_planned.get(d, 0.0) for d in days_sorted], marker="s", color=ACCENT, label="Planned")
+            ax2.set_title("Planned vs actual")
+            ax2.set_ylabel("Hours")
+            ax2.legend()
+            fig2.autofmt_xdate(rotation=25)
+            self.chart_planned.SetBitmap(self._to_bitmap(fig2))
+
+            # Focus trend line
+            focus_by_day: Dict[str, float] = {}
+            for entry_date, _activity, hours, _obj, _target, completion, *_rest in entries:
+                if hours:
+                    focus = hours * ((completion or 0.0) / 100)
+                    focus_by_day.setdefault(entry_date, 0.0)
+                    focus_by_day[entry_date] += focus
+            focus_days = sorted(focus_by_day.keys())
+            fig3, ax3 = plt.subplots(figsize=(5, 3))
+            ratios = []
+            for d in focus_days:
+                actual = per_day_actual.get(d, 0.0)
+                ratio = (focus_by_day[d] / actual * 100) if actual else 0
+                ratios.append(ratio)
+            ax3.plot(focus_days, ratios, marker="o", color="#2ecc71")
+            ax3.set_title("Focus ratio")
+            ax3.set_ylabel("% of deep work")
+            fig3.autofmt_xdate(rotation=25)
+            self.chart_focus.SetBitmap(self._to_bitmap(fig3))
+
+            # Category distribution
+            category_hours: Dict[str, float] = {}
+            for _date, activity_name, hours, *_rest in entries:
+                category_hours[activity_name] = category_hours.get(activity_name, 0.0) + (hours or 0.0)
+            fig4, ax4 = plt.subplots(figsize=(4.5, 3))
+            labels = list(category_hours.keys())
+            values = list(category_hours.values())
+            ax4.pie(values, labels=labels, autopct="%1.0f%%", colors=plt.cm.tab20.colors)
+            ax4.set_title("Category mix")
+            self.chart_category.SetBitmap(self._to_bitmap(fig4))
+
+            advice_lines = [
+                f"Planned vs actual: {kpis.get('planned_vs_actual', 'N/A')}",
+                f"Focus ratio: {kpis.get('focus_ratio', 'N/A')}",
+                f"Switches: {kpis.get('switches', '0')} (lower is better)",
+                f"Overtime: {kpis.get('overtime', '0h')}",
+            ]
+            self.advice.SetLabel("\n".join(advice_lines))
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Failed to render floating charts")
+            self.advice.SetLabel(f"Charts unavailable: {exc}")
+            for bitmap in (self.chart_hours, self.chart_planned, self.chart_focus, self.chart_category):
+                bitmap.SetBitmap(wx.NullBitmap)
 
     def on_export(self, event: wx.Event) -> None:
         try:
@@ -470,7 +617,8 @@ class MainPanel(wx.Panel):
         self.activities_panel = self._build_activities_panel(dock_host)
         self.session_panel = self._build_session_panel(dock_host)
         self.objectives_panel = self._build_objectives_panel(dock_host)
-        self.tabs_panel = self._build_tabs_panel(dock_host)
+        self.stats_charts_panel = StatsChartsPanel(dock_host, self.controller)
+        self.tabs_panel = self._build_tabs_panel(dock_host, self.stats_charts_panel)
         self.guide_panel = self._build_guide_panel(dock_host)
 
         self._setup_docking()
@@ -480,6 +628,7 @@ class MainPanel(wx.Panel):
 
     def _setup_docking(self) -> None:
         assert self.mgr is not None
+        self.stats_charts_panel.attach_manager(self.mgr)
         self.mgr.AddPane(
             self.activities_panel,
             wx.aui.AuiPaneInfo()
@@ -522,6 +671,16 @@ class MainPanel(wx.Panel):
             .Floatable(True),
         )
         self.mgr.AddPane(
+            self.stats_charts_panel,
+            wx.aui.AuiPaneInfo()
+            .Name("stats_charts")
+            .Caption("Floating charts")
+            .Right()
+            .BestSize(520, 420)
+            .Floatable(True)
+            .Show(True),
+        )
+        self.mgr.AddPane(
             self.guide_panel,
             wx.aui.AuiPaneInfo()
             .Name("guide")
@@ -540,6 +699,7 @@ class MainPanel(wx.Panel):
         self.mgr.GetPane("activities").Left().BestSize(220, 500)
         self.mgr.GetPane("insights").Bottom().BestSize(700, 260)
         self.mgr.GetPane("objectives").Right().BestSize(360, 260)
+        self.mgr.GetPane("stats_charts").Float().BestSize(520, 420)
         self.mgr.Update()
         self.perspectives["Focus timer"] = self.mgr.SavePerspective()
 
@@ -548,6 +708,7 @@ class MainPanel(wx.Panel):
         self.mgr.GetPane("insights").CenterPane()
         self.mgr.GetPane("session").Top().BestSize(520, 220)
         self.mgr.GetPane("objectives").Bottom().BestSize(520, 180)
+        self.mgr.GetPane("stats_charts").Right().BestSize(620, 420).Show(True)
         self.mgr.Update()
         self.perspectives["Wide stats"] = self.mgr.SavePerspective()
 
@@ -557,6 +718,7 @@ class MainPanel(wx.Panel):
         # Use floating position to avoid AUI argument errors on some platforms
         self.mgr.GetPane("objectives").Float().FloatingPosition(420, 320).BestSize(420, 220)
         self.mgr.GetPane("insights").Right().Floatable(True).BestSize(500, 400)
+        self.mgr.GetPane("stats_charts").Float().BestSize(640, 460).Show(True)
         self.mgr.GetPane("guide").Bottom().Floatable(True).BestSize(500, 180)
         self.mgr.Update()
         self.perspectives["Floating tasks"] = self.mgr.SavePerspective()
@@ -712,7 +874,7 @@ class MainPanel(wx.Panel):
         objectives_card.SetSizer(obj_sizer)
         return objectives_card
 
-    def _build_tabs_panel(self, host: wx.Window) -> wx.Panel:
+    def _build_tabs_panel(self, host: wx.Window, charts_panel: "StatsChartsPanel") -> wx.Panel:
         panel = wx.Panel(host)
         panel.SetBackgroundColour(BACKGROUND)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -758,7 +920,7 @@ class MainPanel(wx.Panel):
 
         self.history_tab = HistoryPanel(notebook, self.controller)
         self.history_tab.SetBackgroundColour(SURFACE)
-        self.stats_tab = StatsPanel(notebook, self.controller)
+        self.stats_tab = StatsPanel(notebook, self.controller, charts_panel)
         self.stats_tab.SetBackgroundColour(SURFACE)
         notebook.AddPage(today_panel, "Today")
         notebook.AddPage(self.history_tab, "History")
