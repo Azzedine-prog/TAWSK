@@ -102,11 +102,24 @@ class AppController:
     def list_activities(self) -> List[Activity]:
         return self.storage.get_activities()
 
-    def add_activity(self, name: str) -> Activity:
-        return self.storage.create_activity(name)
+    def add_activity(self, name: str, description: str = "", default_target_hours: float = 0.0) -> Activity:
+        return self.storage.create_activity(name, description=description, default_target_hours=default_target_hours)
 
-    def update_activity(self, activity_id: int, name: Optional[str] = None, is_active: Optional[bool] = None) -> None:
-        self.storage.update_activity(activity_id, name=name, is_active=is_active)
+    def update_activity(
+        self,
+        activity_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        default_target_hours: Optional[float] = None,
+        is_active: Optional[bool] = None,
+    ) -> None:
+        self.storage.update_activity(
+            activity_id,
+            name=name,
+            description=description,
+            default_target_hours=default_target_hours,
+            is_active=is_active,
+        )
 
     def delete_activity(self, activity_id: int) -> None:
         self.storage.delete_activity(activity_id)
@@ -125,6 +138,7 @@ class AppController:
         objectives: str,
         target_hours: float,
         completion_percent: float,
+        comments: str = "",
         stop_reason: str = "",
     ) -> float:
         timer = self.timers.stop(activity_id)
@@ -138,6 +152,7 @@ class AppController:
             target_hours=target_hours,
             completion_percent=completion_percent,
             stop_reason=stop_reason,
+            comments=comments,
         )
         return elapsed
 

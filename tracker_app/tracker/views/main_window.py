@@ -18,14 +18,14 @@ from tracker_app.core.ai_service import AIAssistantService
 from tracker_app.tracker.controllers import AppController, ConfigManager
 
 LOGGER = logging.getLogger(__name__)
-PRIMARY = "#0f172a"  # dark navy base like LinkedIn canvas
-SECONDARY = "#0A66C2"  # LinkedIn blue as secondary highlight
-ACCENT = "#16a5d9"  # lighter azure accent for clarity
-BACKGROUND = "#0f172a"
-SURFACE = "#111827"
-CARD = "#152238"
-TEXT_ON_DARK = "#e5e7eb"
-MUTED = "#94a3b8"
+PRIMARY = "#1F2937"  # modern deep gray header
+SECONDARY = "#4A90E2"  # vibrant blue
+ACCENT = "#50E3C2"  # mint accent
+BACKGROUND = "#F7F9FC"
+SURFACE = "#FFFFFF"
+CARD = "#FFFFFF"
+TEXT_ON_DARK = "#2D3436"
+MUTED = "#7F8C8D"
 
 MOTIVATION = [
     "Small steps today compound into big wins tomorrow.",
@@ -67,7 +67,7 @@ class HistoryPanel(wx.Panel):
         main_sizer.Add(filter_sizer, 0, wx.EXPAND)
 
         self.list_ctrl = wx.ListCtrl(self, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
-        for i, heading in enumerate(["Date", "Activity", "Hours", "Target", "%", "Objectives", "Reason"]):
+        for i, heading in enumerate(["Date", "Activity", "Hours", "Target", "%", "Objectives", "Reason", "Comments"]):
             self.list_ctrl.InsertColumn(i, heading)
         main_sizer.Add(self.list_ctrl, 1, wx.EXPAND | wx.ALL, 4)
         self.SetSizer(main_sizer)
@@ -93,7 +93,16 @@ class HistoryPanel(wx.Panel):
             selected_idx = self.activity_choice.GetSelection()
             selected_id = self.activity_choice.GetClientData(selected_idx) if selected_idx != wx.NOT_FOUND else None
             self.list_ctrl.DeleteAllItems()
-            for entry_date, activity_name, hours, objectives, target_hours, completion_percent, stop_reason in entries:
+            for (
+                entry_date,
+                activity_name,
+                hours,
+                objectives,
+                target_hours,
+                completion_percent,
+                stop_reason,
+                comments,
+            ) in entries:
                 if selected_id and activity_name != self.activity_choice.GetString(selected_idx):
                     continue
                 idx = self.list_ctrl.InsertItem(self.list_ctrl.GetItemCount(), entry_date)
@@ -103,7 +112,8 @@ class HistoryPanel(wx.Panel):
                 self.list_ctrl.SetItem(idx, 4, f"{completion_percent:.0f}%")
                 self.list_ctrl.SetItem(idx, 5, objectives)
                 self.list_ctrl.SetItem(idx, 6, stop_reason)
-            for col in range(7):
+                self.list_ctrl.SetItem(idx, 7, comments)
+            for col in range(8):
                 self.list_ctrl.SetColumnWidth(col, wx.LIST_AUTOSIZE)
         except Exception as exc:  # pragma: no cover - UI path
             LOGGER.exception("History refresh failed")
@@ -263,6 +273,7 @@ class OutcomeDialog(wx.Dialog):
         self.objectives = default_objectives
         self.completion_percent = 100.0
         self.stop_reason = ""
+        self.comments = ""
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
         summary = (
@@ -294,6 +305,13 @@ class OutcomeDialog(wx.Dialog):
             main_sizer.Add(reason_label, 0, wx.ALL, 6)
             main_sizer.Add(self.reason_ctrl, 0, wx.EXPAND | wx.ALL, 6)
 
+        comments_label = wx.StaticText(self, label="Comments / notes")
+        comments_label.SetForegroundColour(ACCENT)
+        self.comments_ctrl = wx.TextCtrl(self, style=wx.TE_MULTILINE, size=(400, 80))
+        self.comments_ctrl.SetToolTip("Add reflections or context that will appear in statistics exports")
+        main_sizer.Add(comments_label, 0, wx.ALL, 6)
+        main_sizer.Add(self.comments_ctrl, 0, wx.EXPAND | wx.ALL, 6)
+
         btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         main_sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 6)
         self.SetSizerAndFit(main_sizer)
@@ -309,10 +327,47 @@ class OutcomeDialog(wx.Dialog):
         self.objectives = self.objectives_ctrl.GetValue()
         self.completion_percent = self.percent_ctrl.GetValue()
         self.stop_reason = self.reason_ctrl.GetValue().strip() if self.reason_ctrl else ""
+        self.comments = self.comments_ctrl.GetValue().strip()
         self.EndModal(wx.ID_OK)
 
-    def get_values(self) -> tuple[str, float, str]:
-        return self.objectives, self.completion_percent, self.stop_reason
+    def get_values(self) -> tuple[str, float, str, str]:
+        return self.objectives, self.completion_percent, self.stop_reason, self.comments
+
+
+class ActivityDialog(wx.Dialog):
+    """Dialog to capture activity details including description and default plan."""
+
+    def __init__(self, parent: wx.Window, title: str, name: str = "", description: str = "", target: float = 1.0):
+        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        name_row = wx.BoxSizer(wx.HORIZONTAL)
+        name_row.Add(wx.StaticText(self, label="Name"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        self.name_ctrl = wx.TextCtrl(self, value=name, size=(280, -1))
+        self.name_ctrl.SetToolTip("Short label that will appear in lists and stats")
+        name_row.Add(self.name_ctrl, 1, wx.ALL, 6)
+        main_sizer.Add(name_row, 0, wx.EXPAND)
+
+        desc_label = wx.StaticText(self, label="Description")
+        desc_label.SetForegroundColour(ACCENT)
+        self.desc_ctrl = wx.TextCtrl(self, value=description, style=wx.TE_MULTILINE, size=(360, 120))
+        self.desc_ctrl.SetToolTip("Add context so help popovers can guide you later")
+        main_sizer.Add(desc_label, 0, wx.ALL, 6)
+        main_sizer.Add(self.desc_ctrl, 1, wx.EXPAND | wx.ALL, 6)
+
+        target_row = wx.BoxSizer(wx.HORIZONTAL)
+        target_row.Add(wx.StaticText(self, label="Default plan (hours)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        self.target_ctrl = wx.SpinCtrlDouble(self, min=0, max=24, inc=0.25, initial=target)
+        self.target_ctrl.SetToolTip("Pre-fill planned time when you start the timer")
+        target_row.Add(self.target_ctrl, 0, wx.ALL, 6)
+        main_sizer.Add(target_row, 0, wx.EXPAND)
+
+        btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        main_sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 6)
+        self.SetSizerAndFit(main_sizer)
+
+    def get_values(self) -> tuple[str, str, float]:
+        return self.name_ctrl.GetValue(), self.desc_ctrl.GetValue(), self.target_ctrl.GetValue()
 
 
 class MainPanel(wx.Panel):
@@ -390,6 +445,7 @@ class MainPanel(wx.Panel):
 
         dock_host = wx.Panel(self)
         dock_host.SetBackgroundColour(BACKGROUND)
+        dock_host.SetMinSize((1100, 760))
         self.mgr = wx.aui.AuiManager(dock_host)
 
         self.activities_panel = self._build_activities_panel(dock_host)
@@ -411,7 +467,8 @@ class MainPanel(wx.Panel):
             .Name("activities")
             .Caption("Activities")
             .Left()
-            .BestSize(260, 400)
+            .BestSize(320, 500)
+            .MinSize(300, 480)
             .CloseButton(False)
             .Floatable(True)
             .Movable(True),
@@ -550,6 +607,7 @@ class MainPanel(wx.Panel):
         self.activity_list = wx.ListCtrl(left_card, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
         self.activity_list.InsertColumn(0, "Activity")
         self.activity_list.InsertColumn(1, "Today")
+        self.activity_list.InsertColumn(2, "Plan")
         self.activity_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_activity_selected)
         self.activity_list.Bind(wx.EVT_CONTEXT_MENU, self.on_activity_context)
         self.activity_list.SetToolTip("Select or right-click to manage activities and timers")
@@ -562,6 +620,9 @@ class MainPanel(wx.Panel):
         for btn in (add_btn, edit_btn, del_btn):
             btn.SetBackgroundColour(SECONDARY)
             btn.SetForegroundColour("white")
+            font = btn.GetFont()
+            font.PointSize += 1
+            btn.SetFont(font)
         add_btn.Bind(wx.EVT_BUTTON, self.on_add_activity)
         edit_btn.Bind(wx.EVT_BUTTON, self.on_edit_activity)
         del_btn.Bind(wx.EVT_BUTTON, self.on_delete_activity)
@@ -608,6 +669,9 @@ class MainPanel(wx.Panel):
         for btn in (self.start_btn, self.pause_btn, self.stop_btn, self.reset_btn):
             btn.SetBackgroundColour(SECONDARY)
             btn.SetForegroundColour("white")
+            font = btn.GetFont()
+            font.PointSize += 1
+            btn.SetFont(font)
             btn_panel.Add(btn, 1, wx.ALL, 4)
         self.start_btn.Bind(wx.EVT_BUTTON, self.on_start)
         self.pause_btn.Bind(wx.EVT_BUTTON, self.on_pause)
@@ -638,7 +702,7 @@ class MainPanel(wx.Panel):
         today_panel.SetBackgroundColour(SURFACE)
         today_sizer = wx.BoxSizer(wx.VERTICAL)
         self.today_list = wx.ListCtrl(today_panel, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
-        for i, heading in enumerate(["Date", "Activity", "Hours", "Target", "%", "Objectives", "Reason"]):
+        for i, heading in enumerate(["Date", "Activity", "Hours", "Target", "%", "Objectives", "Reason", "Comments"]):
             self.today_list.InsertColumn(i, heading)
         self.today_list.SetToolTip("What you tracked today including targets, objectives, and reasons")
         refresh_today = wx.Button(today_panel, label="Refresh Today")
@@ -724,13 +788,15 @@ class MainPanel(wx.Panel):
                 completion_percent = entry.completion_percent if entry.completion_percent is not None else 0.0
                 objectives = entry.objectives_succeeded or ""
                 stop_reason = entry.stop_reason or ""
+                comments = getattr(entry, "comments", "") or ""
 
                 self.today_list.SetItem(idx, 2, f"{duration_hours:.2f}")
                 self.today_list.SetItem(idx, 3, f"{target_hours:.2f}")
                 self.today_list.SetItem(idx, 4, f"{completion_percent:.0f}%")
                 self.today_list.SetItem(idx, 5, objectives)
                 self.today_list.SetItem(idx, 6, stop_reason)
-            for col in range(7):
+                self.today_list.SetItem(idx, 7, comments)
+            for col in range(8):
                 self.today_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
 
         self._with_error_dialog("Loading today's entries", action)
@@ -764,10 +830,12 @@ class MainPanel(wx.Panel):
                 idx = self.activity_list.InsertItem(self.activity_list.GetItemCount(), act.name)
                 hours = today_entries.get(act.id).duration_hours if act.id in today_entries else 0.0
                 self.activity_list.SetItem(idx, 1, f"{hours:.2f}h")
+                self.activity_list.SetItem(idx, 2, f"{act.default_target_hours:.2f}h")
                 self.activity_list.SetItemData(idx, act.id)
+                self.activity_list.SetItemToolTip(idx, f"{act.description or 'No description set.'}\nPlanned: {act.default_target_hours:.2f}h")
                 if self.selected_activity == act.id:
                     self.activity_list.Select(idx)
-            for col in range(2):
+            for col in range(3):
                 self.activity_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
             self.history_tab.load_activities()
             self.refresh_today()
@@ -813,6 +881,9 @@ class MainPanel(wx.Panel):
 
     def on_activity_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
         self.selected_activity = event.GetData()
+        activity = next((a for a in self.controller.list_activities() if a.id == self.selected_activity), None)
+        if activity and activity.default_target_hours:
+            self.target_input.SetValue(activity.default_target_hours)
         self._load_objectives()
 
     def on_food_break(self, event: wx.CommandEvent) -> None:
@@ -850,9 +921,13 @@ class MainPanel(wx.Panel):
         self._with_error_dialog("Loading objectives", action)
 
     def on_add_activity(self, event: wx.Event) -> None:
-        dlg = wx.TextEntryDialog(self, "Activity name", "Add Activity")
+        dlg = ActivityDialog(self, "Add Activity")
         if dlg.ShowModal() == wx.ID_OK:
-            self._with_error_dialog("Creating activity", lambda: self.controller.add_activity(dlg.GetValue()))
+            name, desc, target = dlg.get_values()
+            self._with_error_dialog(
+                "Creating activity",
+                lambda: self.controller.add_activity(name, description=desc, default_target_hours=target),
+            )
             self.load_activities()
         dlg.Destroy()
 
@@ -860,10 +935,24 @@ class MainPanel(wx.Panel):
         activity_id = self._require_selection()
         if activity_id is None:
             return
-        name = self.activity_list.GetItemText(self.activity_list.GetFirstSelected())
-        dlg = wx.TextEntryDialog(self, "New name", "Edit Activity", value=name)
+        activity = next((a for a in self.controller.list_activities() if a.id == activity_id), None)
+        if activity is None:
+            return
+        dlg = ActivityDialog(
+            self,
+            "Edit Activity",
+            name=activity.name,
+            description=activity.description,
+            target=activity.default_target_hours,
+        )
         if dlg.ShowModal() == wx.ID_OK:
-            self._with_error_dialog("Renaming activity", lambda: self.controller.update_activity(activity_id, name=dlg.GetValue()))
+            name, desc, target = dlg.get_values()
+            self._with_error_dialog(
+                "Updating activity",
+                lambda: self.controller.update_activity(
+                    activity_id, name=name, description=desc, default_target_hours=target
+                ),
+            )
             self.load_activities()
         dlg.Destroy()
 
@@ -991,7 +1080,7 @@ class MainPanel(wx.Panel):
         if dialog.ShowModal() != wx.ID_OK:
             self.controller.timers.stop(activity_id)
             return
-        objectives, completion_percent, stop_reason = dialog.get_values()
+        objectives, completion_percent, stop_reason, comments = dialog.get_values()
         result = self._with_error_dialog(
             "Saving session",
             lambda: self.controller.finalize_timer(
@@ -999,6 +1088,7 @@ class MainPanel(wx.Panel):
                 objectives,
                 target_hours,
                 completion_percent,
+                comments=comments,
                 stop_reason=stop_reason,
             ),
         )

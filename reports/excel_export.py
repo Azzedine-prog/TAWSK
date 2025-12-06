@@ -28,6 +28,7 @@ class ExcelExporter:
                 "TargetHours",
                 "CompletionPercent",
                 "StopReason",
+                "Comments",
             ],
         )
         raw_df["Date"] = pd.to_datetime(raw_df["Date"]).dt.date

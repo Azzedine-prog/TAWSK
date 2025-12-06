@@ -12,11 +12,22 @@ class Activity:
 
     id: Optional[int]
     name: str
+    description: str = ""
+    default_target_hours: float = 0.0
     is_active: bool = True
 
     @classmethod
     def from_row(cls, row: tuple) -> "Activity":
-        return cls(id=row[0], name=row[1], is_active=bool(row[2]))
+        description = row[2] if len(row) > 2 and row[2] is not None else ""
+        default_target = row[3] if len(row) > 3 and row[3] is not None else 0.0
+        is_active = bool(row[4]) if len(row) > 4 else bool(row[2]) if len(row) > 2 else True
+        return cls(
+            id=row[0],
+            name=row[1],
+            description=description,
+            default_target_hours=default_target,
+            is_active=is_active,
+        )
 
 
 @dataclass
@@ -31,6 +42,7 @@ class DailyEntry:
     target_hours: float = 0.0
     completion_percent: float = 0.0
     stop_reason: str = ""
+    comments: str = ""
 
     @classmethod
     def from_row(cls, row: tuple) -> "DailyEntry":
@@ -39,6 +51,7 @@ class DailyEntry:
         target_hours = row[5] if len(row) > 5 and row[5] is not None else 0.0
         completion_percent = row[6] if len(row) > 6 and row[6] is not None else 0.0
         stop_reason = row[7] if len(row) > 7 and row[7] is not None else ""
+        comments = row[8] if len(row) > 8 and row[8] is not None else ""
         return cls(
             id=row[0],
             date=parsed_date,
@@ -48,6 +61,7 @@ class DailyEntry:
             target_hours=target_hours,
             completion_percent=completion_percent,
             stop_reason=stop_reason,
+            comments=comments,
         )
 
 
