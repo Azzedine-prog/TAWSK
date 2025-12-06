@@ -133,6 +133,51 @@ class StatsPanel(wx.Panel):
         self.charts_panel = charts_panel
         self._build_ui()
 
+    def _build_ui(self) -> None:
+        """Construct controls for statistics KPIs and preview chart."""
+        self.SetBackgroundColour(SURFACE)
+
+        main = wx.BoxSizer(wx.VERTICAL)
+
+        range_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.range_choice = wx.Choice(self, choices=["Last 7 days", "Last 30 days", "All time"])
+        self.range_choice.SetSelection(0)
+        self.range_choice.SetToolTip("Choose the period to summarize")
+        range_sizer.Add(wx.StaticText(self, label="Range"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        range_sizer.Add(self.range_choice, 0, wx.ALL, 4)
+
+        refresh_btn = wx.Button(self, label="Refresh")
+        refresh_btn.SetBackgroundColour(SECONDARY)
+        refresh_btn.SetForegroundColour("white")
+        refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
+        refresh_btn.SetToolTip("Recompute KPIs and charts for the selected window")
+        range_sizer.Add(refresh_btn, 0, wx.ALL, 4)
+
+        export_btn = wx.Button(self, label="Export Excel")
+        export_btn.SetBackgroundColour(SECONDARY)
+        export_btn.SetForegroundColour("white")
+        export_btn.Bind(wx.EVT_BUTTON, self._on_export)
+        export_btn.SetToolTip("Write raw data and KPIs to statistics.xlsx")
+        range_sizer.Add(export_btn, 0, wx.ALL, 4)
+
+        main.Add(range_sizer, 0, wx.EXPAND)
+
+        self.kpi_text = wx.StaticText(self, label="Load a range to view KPIs")
+        self.kpi_text.SetForegroundColour(TEXT_ON_DARK)
+        main.Add(self.kpi_text, 0, wx.ALL, 6)
+
+        self.analysis_text = wx.StaticText(
+            self,
+            label="Charts and insights will appear after refresh.",
+        )
+        self.analysis_text.SetForegroundColour(MUTED)
+        main.Add(self.analysis_text, 0, wx.ALL, 6)
+
+        self.chart_bitmap = wx.StaticBitmap(self)
+        main.Add(self.chart_bitmap, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.SetSizer(main)
+
     def _date_range(self):
         today = date.today()
         sel = self.range_choice.GetSelection()
@@ -222,6 +267,19 @@ class StatsPanel(wx.Panel):
             wx.MessageBox(
                 f"Unable to render statistics.\n\n{exc}\nMake sure matplotlib and wxPython are installed and the database is readable.",
                 "Statistics error",
+                style=wx.ICON_ERROR,
+            )
+
+    def _on_export(self, event: wx.Event) -> None:
+        try:
+            start, end = self._date_range()
+            path = self.controller.export_to_excel(start, end)
+            wx.MessageBox(f"Exported statistics to {path}", "Export complete")
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Statistics export failed")
+            wx.MessageBox(
+                f"Excel export failed.\n\n{exc}\nClose any open Excel file and verify write access.",
+                "Export error",
                 style=wx.ICON_ERROR,
             )
 
