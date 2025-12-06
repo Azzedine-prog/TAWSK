@@ -235,8 +235,17 @@ class AppController:
         if not entries:
             return {}
 
-        total_actual = sum(row[2] or 0.0 for row in entries)
-        total_planned = sum((row[4] or 0.0) for row in entries)
+        per_day: Dict[str, set] = {}
+        daily_hours: Dict[str, float] = {}
+        daily_planned: Dict[str, float] = {}
+        for entry_date, activity_name, hours, *_rest in entries:
+            daily_hours[entry_date] = daily_hours.get(entry_date, 0.0) + (hours or 0.0)
+            per_day.setdefault(entry_date, set()).add(activity_name)
+        for entry_date, _activity, _hours, _obj, target, *_rest in entries:
+            daily_planned[entry_date] = daily_planned.get(entry_date, 0.0) + (target or 0.0)
+
+        total_actual = sum(daily_hours.values())
+        total_planned = sum(daily_planned.values())
         planned_vs_actual = (total_actual / total_planned * 100) if total_planned else None
 
         focused_time = sum((row[2] or 0.0) * ((row[5] or 0.0) / 100) for row in entries)
@@ -247,32 +256,78 @@ class AppController:
         for _date, activity_name, hours, *_rest in entries:
             category_hours[activity_name] = category_hours.get(activity_name, 0.0) + (hours or 0.0)
 
-        # Task switching frequency: count unique activities per day minus one
-        per_day: Dict[str, set] = {}
-        for entry_date, activity_name, *_rest in entries:
-            per_day.setdefault(entry_date, set()).add(activity_name)
+        # Task switching frequency and context switching load
         switches = sum(max(0, len(names) - 1) for names in per_day.values())
+        days_count = max(len(per_day), 1)
+        switch_load = switches / days_count
 
         # Overtime assumes 8h nominal day
-        overtime = sum(max(0.0, sum(row[2] or 0.0 for row in entries if row[0] == day) - 8.0) for day in per_day)
+        overtime = sum(max(0.0, daily_hours.get(day, 0.0) - 8.0) for day in per_day)
 
         total_tasks = len(entries)
         completed_tasks = sum(1 for row in entries if (row[5] or 0.0) >= 100)
         completion_rate = (completed_tasks / total_tasks * 100) if total_tasks else None
         avg_task_duration = (total_actual / total_tasks) if total_tasks else None
 
-        productivity_score = (focused_time * 0.6) + (completed_tasks * 0.3) - (switches * 0.1)
+        productivity_score = (focused_time * 0.4) + (completed_tasks * 0.4) - (switches * 0.2)
+        efficiency_index = (total_actual / total_planned) if total_planned else 1.0
+        velocity = completed_tasks / days_count if days_count else 0.0
+        capacity_forecast = (total_actual / days_count) * 7 if days_count else 0.0
+
+        focus_quality = 0.0
+        if focus_ratio is not None:
+            focus_quality = max(0.0, min(100.0, (focus_ratio * 0.7) + max(0.0, 30 - (switch_load * 10))))
+
+        interruption_events = sum(1 for _d, _a, _h, _o, _t, _c, reason, *_r in entries if (reason or "").lower().startswith("break"))
+        interruption_cost = interruption_events * 10  # minutes lost estimate
+
+        accuracy_by_category = {}
+        for _date, activity_name, hours, _obj, target, *_rest in entries:
+            if target:
+                ratios = accuracy_by_category.setdefault(activity_name, [])
+                ratios.append(hours / target)
+        category_accuracy = ", ".join(
+            f"{name}: {sum(vals)/len(vals)*100:.0f}%" for name, vals in accuracy_by_category.items()
+        )
+
+        drift = sum((daily_hours.get(day, 0.0) - daily_planned.get(day, 0.0)) for day in per_day)
+        drift_text = f"{drift:+.1f}h vs plan"
+
+        consistency_score = 0.0
+        if len(daily_hours) > 1:
+            avg_hours = total_actual / len(daily_hours)
+            variance = sum((h - avg_hours) ** 2 for h in daily_hours.values()) / len(daily_hours)
+            consistency_score = max(0.0, min(100.0, 100 - variance * 5))
+        elif daily_hours:
+            consistency_score = 100.0
+
+        habit_streak = completed_tasks
+        procrastination = sum(1 for _d, _a, hours, _o, target, *_r in entries if target and hours > target * 1.3)
+
+        flow_efficiency = (focused_time / total_actual * 100) if total_actual else None
 
         return {
             "planned_vs_actual": f"{planned_vs_actual:.0f}%" if planned_vs_actual is not None else "N/A",
             "focus_ratio": f"{focus_ratio:.0f}%" if focus_ratio is not None else "N/A",
             "category_hours": ", ".join(f"{k}: {v:.1f}h" for k, v in sorted(category_hours.items(), key=lambda i: i[1], reverse=True)),
             "switches": str(int(switches)),
+            "switch_load": f"{switch_load:.1f}/day",
             "overtime": f"{overtime:.1f}h",
             "completion_rate": f"{completion_rate:.0f}%" if completion_rate is not None else "N/A",
             "avg_task_duration": f"{avg_task_duration:.2f}h" if avg_task_duration is not None else "N/A",
             "productivity_score": f"{productivity_score:.1f}",
             "goal_achievement": f"{completion_rate:.0f}%" if completion_rate is not None else "N/A",
+            "efficiency_index": f"{efficiency_index:.2f}x",
+            "task_velocity": f"{velocity:.2f}/day",
+            "capacity_forecast": f"{capacity_forecast:.1f}h next week",
+            "focus_quality": f"{focus_quality:.0f}%",
+            "interruption_cost": f"{interruption_cost:.0f} min",
+            "category_accuracy": category_accuracy or "No planned targets",
+            "time_drift": drift_text,
+            "consistency_score": f"{consistency_score:.0f}%",
+            "habit_streak": str(habit_streak),
+            "procrastination_flags": str(procrastination),
+            "flow_efficiency": f"{flow_efficiency:.0f}%" if flow_efficiency is not None else "N/A",
         }
 
     # Excel export

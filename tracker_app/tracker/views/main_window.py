@@ -228,6 +228,13 @@ class StatsPanel(wx.Panel):
                 f"Completion rate: {kpis.get('completion_rate', 'N/A')}",
                 f"Avg task duration: {kpis.get('avg_task_duration', 'N/A')}",
                 f"Productivity score: {kpis.get('productivity_score', 'N/A')}",
+                f"Efficiency index: {kpis.get('efficiency_index', 'N/A')}",
+                f"Velocity: {kpis.get('task_velocity', 'N/A')}",
+                f"Capacity forecast: {kpis.get('capacity_forecast', 'N/A')}",
+                f"Focus quality: {kpis.get('focus_quality', 'N/A')}",
+                f"Interruption cost: {kpis.get('interruption_cost', 'N/A')}",
+                f"Consistency score: {kpis.get('consistency_score', 'N/A')}",
+                f"Flow efficiency: {kpis.get('flow_efficiency', 'N/A')}",
             ]
             self.kpi_text.SetLabel(
                 "\n".join([
@@ -490,6 +497,10 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 f"Overtime: {kpis.get('overtime', '0h')}",
                 f"Completion rate: {kpis.get('completion_rate', 'N/A')}",
                 f"Productivity score: {kpis.get('productivity_score', 'N/A')}",
+                f"Efficiency: {kpis.get('efficiency_index', 'N/A')}",
+                f"Velocity: {kpis.get('task_velocity', 'N/A')}",
+                f"Focus quality: {kpis.get('focus_quality', 'N/A')}",
+                f"Consistency: {kpis.get('consistency_score', 'N/A')}",
             ]
             self.advice.SetLabel("\n".join(advice_lines))
         except Exception as exc:  # pragma: no cover - UI path

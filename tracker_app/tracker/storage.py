@@ -191,7 +191,7 @@ class Storage:
             if existing:
                 new_duration = existing.duration_hours + duration_hours_delta
                 new_objectives = objectives_text if objectives_text is not None else existing.objectives_succeeded
-                new_target = target_hours if target_hours is not None else existing.target_hours
+                new_target = (existing.target_hours or 0.0) + ((target_hours or 0.0) if target_hours is not None else 0.0)
                 new_percent = completion_percent if completion_percent is not None else existing.completion_percent
                 new_reason = stop_reason if stop_reason is not None else existing.stop_reason
                 new_comments = comments if comments is not None else getattr(existing, "comments", "")

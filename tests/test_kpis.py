@@ -33,7 +33,9 @@ def test_get_kpis(tmp_path):
     controller = AppController(storage, TimerManager(), DummyExporter(), DummyConfigManager())
     kpis = controller.get_kpis(today, today)
 
-    assert kpis["planned_vs_actual"] == "500%"
+    assert kpis["planned_vs_actual"] == "125%"
     assert kpis["focus_ratio"].endswith("%")
     assert "Deep Work" in kpis["category_hours"]
     assert kpis["completion_rate"] == "100%"
+    assert "efficiency_index" in kpis
+    assert "task_velocity" in kpis
