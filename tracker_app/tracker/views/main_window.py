@@ -235,36 +235,6 @@ class StatsChartsPanel(wx.Panel):
         self.manager: Optional[wx.aui.AuiManager] = None
         self._build_ui()
 
-    def _build_ui(self) -> None:
-        self.SetBackgroundColour(SURFACE)
-        main = wx.BoxSizer(wx.VERTICAL)
-        header = wx.StaticText(self, label="Time management visuals")
-        header.SetForegroundColour(TEXT_ON_DARK)
-        main.Add(header, 0, wx.ALL, 6)
-
-        self.chart_hours = wx.StaticBitmap(self)
-        self.chart_planned = wx.StaticBitmap(self)
-        self.chart_focus = wx.StaticBitmap(self)
-        self.chart_category = wx.StaticBitmap(self)
-
-        for label_text, bitmap in (
-            ("Hours by activity", self.chart_hours),
-            ("Planned vs actual", self.chart_planned),
-            ("Focus trend", self.chart_focus),
-            ("Category mix", self.chart_category),
-        ):
-            box = wx.StaticBox(self, label=label_text)
-            box.SetForegroundColour(TEXT_ON_DARK)
-            sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
-            sizer.Add(bitmap, 1, wx.EXPAND | wx.ALL, 4)
-            main.Add(sizer, 0, wx.EXPAND | wx.ALL, 4)
-
-        self.advice = wx.StaticText(self, label="Charts will appear after refresh.")
-        self.advice.SetForegroundColour(MUTED)
-        main.Add(self.advice, 0, wx.ALL, 6)
-
-        self.SetSizer(main)
-
     def attach_manager(self, manager: wx.aui.AuiManager) -> None:
         self.manager = manager
 
@@ -366,6 +336,38 @@ class StatsChartsPanel(wx.Panel):
             for bitmap in (self.chart_hours, self.chart_planned, self.chart_focus, self.chart_category):
                 bitmap.SetBitmap(wx.NullBitmap)
 
+    def _date_range(self) -> tuple[date, date]:
+        today = date.today()
+        sel = self.range_choice.GetSelection()
+        if sel == 0:
+            return today - timedelta(days=6), today
+        if sel == 1:
+            return today - timedelta(days=29), today
+        return date.min, today
+
+    def on_refresh(self, event: wx.Event) -> None:
+        self.refresh()
+
+    def refresh(self) -> None:
+        try:
+            start, end = self._date_range()
+            stats = self.controller.get_stats(start, end)
+            entries = self.controller.get_entries_between(start, end)
+            kpis = self.controller.get_kpis(start, end)
+            if not stats:
+                self.clear()
+                self.advice.SetLabel("No data in selected range. Track sessions to see visuals.")
+                return
+            self.update_charts(stats, entries, kpis, start, end)
+            self.present()
+        except Exception as exc:  # pragma: no cover - UI path
+            LOGGER.exception("Floating stats refresh failed")
+            wx.MessageBox(
+                f"Unable to refresh floating charts.\n\n{exc}\nCheck matplotlib/wxPython availability and database access.",
+                "Statistics error",
+                style=wx.ICON_ERROR,
+            )
+
     def on_export(self, event: wx.Event) -> None:
         try:
             start, end = self._date_range()
@@ -380,14 +382,17 @@ class StatsChartsPanel(wx.Panel):
             )
 
     def _build_ui(self) -> None:
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.SetBackgroundColour(SURFACE)
+        main = wx.BoxSizer(wx.VERTICAL)
+
+        # Range and actions
         range_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.range_choice = wx.Choice(self, choices=["Last 7 days", "Last 30 days", "All time"])
         self.range_choice.SetSelection(0)
         self.range_choice.SetToolTip("Choose how far back to analyze your work")
         range_sizer.Add(wx.StaticText(self, label="Range"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
         range_sizer.Add(self.range_choice, 0, wx.ALL, 4)
-        refresh_btn = wx.Button(self, label="Refresh")
+        refresh_btn = wx.Button(self, label="Refresh charts")
         refresh_btn.SetBackgroundColour(SECONDARY)
         refresh_btn.SetForegroundColour("white")
         refresh_btn.Bind(wx.EVT_BUTTON, self.on_refresh)
@@ -398,29 +403,34 @@ class StatsChartsPanel(wx.Panel):
         export_btn.SetToolTip("Write raw data and KPIs to statistics.xlsx")
         export_btn.Bind(wx.EVT_BUTTON, self.on_export)
         range_sizer.Add(export_btn, 0, wx.ALL, 4)
-        main_sizer.Add(range_sizer, 0, wx.EXPAND)
+        main.Add(range_sizer, 0, wx.EXPAND)
 
-        kpi_panel = wx.Panel(self)
-        kpi_panel.SetBackgroundColour(CARD)
-        kpi_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.kpi_text = wx.StaticText(kpi_panel, label="")
-        self.kpi_text.SetForegroundColour(TEXT_ON_DARK)
-        self.analysis_text = wx.StaticText(kpi_panel, label="")
-        self.analysis_text.SetForegroundColour(MUTED)
-        kpi_sizer.Add(self.kpi_text, 0, wx.ALL, 10)
-        kpi_sizer.Add(self.analysis_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-        kpi_panel.SetSizer(kpi_sizer)
-        main_sizer.Add(kpi_panel, 0, wx.EXPAND | wx.ALL, 6)
+        header = wx.StaticText(self, label="Time management visuals")
+        header.SetForegroundColour(TEXT_ON_DARK)
+        main.Add(header, 0, wx.ALL, 6)
 
-        chart_panel = wx.Panel(self)
-        chart_panel.SetBackgroundColour(SURFACE)
-        chart_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.chart_bitmap = wx.StaticBitmap(chart_panel)
-        chart_sizer.Add(self.chart_bitmap, 1, wx.EXPAND | wx.ALL, 6)
-        chart_panel.SetSizer(chart_sizer)
-        main_sizer.Add(chart_panel, 1, wx.EXPAND | wx.ALL, 6)
+        self.chart_hours = wx.StaticBitmap(self)
+        self.chart_planned = wx.StaticBitmap(self)
+        self.chart_focus = wx.StaticBitmap(self)
+        self.chart_category = wx.StaticBitmap(self)
 
-        self.SetSizer(main_sizer)
+        for label_text, bitmap in (
+            ("Hours by activity", self.chart_hours),
+            ("Planned vs actual", self.chart_planned),
+            ("Focus trend", self.chart_focus),
+            ("Category mix", self.chart_category),
+        ):
+            box = wx.StaticBox(self, label=label_text)
+            box.SetForegroundColour(TEXT_ON_DARK)
+            sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
+            sizer.Add(bitmap, 1, wx.EXPAND | wx.ALL, 4)
+            main.Add(sizer, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.advice = wx.StaticText(self, label="Charts will appear after refresh.")
+        self.advice.SetForegroundColour(MUTED)
+        main.Add(self.advice, 0, wx.ALL, 6)
+
+        self.SetSizer(main)
 
 
 class OutcomeDialog(wx.Dialog):
