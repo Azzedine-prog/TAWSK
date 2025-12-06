@@ -324,6 +324,7 @@ class MainPanel(wx.Panel):
         self.active_targets: Dict[int, float] = {}
         self.mgr: Optional[wx.aui.AuiManager] = None
         self.current_user_id = "default-user"
+        self.task_windows: Dict[int, "TaskFrame"] = {}
         self._build_ui()
         self.load_activities()
 
@@ -361,7 +362,9 @@ class MainPanel(wx.Panel):
         subtitle.Wrap(360)
         layout_label = wx.StaticText(header, label="Layout")
         layout_label.SetForegroundColour("white")
-        self.layout_choice = wx.Choice(header, choices=["Balanced grid", "Focus timer", "Wide stats"])
+        self.layout_choice = wx.Choice(
+            header, choices=["Balanced grid", "Focus timer", "Wide stats", "Floating tasks"]
+        )
         self.layout_choice.SetSelection(0)
         self.layout_choice.Bind(wx.EVT_CHOICE, self.on_layout_choice)
         self.layout_choice.SetToolTip("Switch between preset docked layouts")
@@ -471,6 +474,15 @@ class MainPanel(wx.Panel):
         self.mgr.GetPane("objectives").Bottom().BestSize(520, 180)
         self.mgr.Update()
         self.perspectives["Wide stats"] = self.mgr.SavePerspective()
+
+        # Floating, Vector Canoe-inspired layout where panes feel like modular instruments
+        self.mgr.GetPane("activities").Left().Floatable(True).Caption("Activities dock")
+        self.mgr.GetPane("session").Float().BestSize(480, 240).Caption("Timer module")
+        self.mgr.GetPane("objectives").Float().Position(420, 320).BestSize(420, 220)
+        self.mgr.GetPane("insights").Right().Floatable(True).BestSize(500, 400)
+        self.mgr.GetPane("guide").Bottom().Floatable(True).BestSize(500, 180)
+        self.mgr.Update()
+        self.perspectives["Floating tasks"] = self.mgr.SavePerspective()
 
         # Restore default
         self.mgr.LoadPerspective(self.perspectives["Balanced grid"])
@@ -761,6 +773,10 @@ class MainPanel(wx.Panel):
 
         self._with_error_dialog("Loading activities", action)
 
+    def _activity_name(self, activity_id: int) -> str:
+        activity = next((a.name for a in self.controller.list_activities() if a.id == activity_id), "Activity")
+        return activity
+
     def _require_selection(self) -> Optional[int]:
         item = self.activity_list.GetFirstSelected()
         if item == -1:
@@ -784,6 +800,7 @@ class MainPanel(wx.Panel):
             ("Stop", self.on_stop),
             ("Reset", self.on_reset),
             ("Log food break", self.on_food_break),
+            ("Open task window", self.on_open_task_window),
             ("Edit name", self.on_edit_activity),
             ("Delete", self.on_delete_activity),
         ):
@@ -805,6 +822,17 @@ class MainPanel(wx.Panel):
             "Food break logged. Remember to hydrate and return when ready!",
             "Food break",
         )
+
+    def on_open_task_window(self, event: wx.CommandEvent) -> None:
+        activity_id = self._require_selection()
+        if activity_id is None:
+            return
+        if activity_id in self.task_windows:
+            self.task_windows[activity_id].Raise()
+            return
+        frame = TaskFrame(self, self.controller, self, activity_id)
+        self.task_windows[activity_id] = frame
+        frame.Show()
 
     def _load_objectives(self) -> None:
         if self.selected_activity is None:
@@ -899,7 +927,51 @@ class MainPanel(wx.Panel):
     def _handle_timer_complete(self, activity_id: int, elapsed: float) -> None:
         if activity_id != self.selected_activity:
             self.selected_activity = activity_id
-        wx.MessageBox("Planned time reached. Let's wrap up!", "Time finished")
+        activity_name = self._activity_name(activity_id)
+        target_hours = self.active_targets.get(activity_id, self.target_input.GetValue())
+        dialog = wx.MessageDialog(
+            self,
+            (
+                f"{activity_name}: planned time {target_hours:.2f}h reached.\n"
+                f"You logged {elapsed / 3600.0:.2f}h. Extend or log now?\n\n"
+                "• Extend keeps the timer running with +15 minutes.\n"
+                "• Log now records the session with your objectives.\n"
+                "• Remind later will nudge you again in 5 minutes."
+            ),
+            "Time finished",
+            style=wx.YES_NO | wx.CANCEL | wx.ICON_INFORMATION,
+        )
+        dialog.SetYesNoLabels("Extend 15m", "Log now")
+        choice = dialog.ShowModal()
+        dialog.Destroy()
+
+        if choice == wx.ID_YES:
+            extension_hours = 0.25
+            new_target = (elapsed / 3600.0) + extension_hours
+            self.active_targets[activity_id] = new_target
+
+            def tick_cb(elapsed_seconds: float) -> None:
+                wx.CallAfter(self._update_timer_display, activity_id, elapsed_seconds)
+
+            def on_complete(elapsed_seconds: float) -> None:
+                wx.CallAfter(self._handle_timer_complete, activity_id, elapsed_seconds)
+
+            self._with_error_dialog(
+                "Extending timer",
+                lambda: self.controller.start_timer(activity_id, tick_cb, new_target, on_complete),
+            )
+            return
+
+        if choice == wx.ID_CANCEL:
+            wx.CallLater(
+                5 * 60 * 1000,
+                lambda: wx.MessageBox(
+                    f"Reminder: {activity_name} reached its plan. Log or extend when ready.",
+                    "Reminder",
+                ),
+            )
+            return
+
         self._complete_session(activity_id, "Time is up", allow_reason=False)
 
     def _complete_session(self, activity_id: int, title: str, allow_reason: bool) -> None:
@@ -951,6 +1023,99 @@ class MainPanel(wx.Panel):
             self.load_activities()
             self.on_start(wx.CommandEvent())
         dlg.Destroy()
+
+
+class TaskFrame(wx.Frame):
+    """Independent task window for Vector Canoe-like modular workflows."""
+
+    def __init__(self, parent: wx.Window, controller: AppController, main_panel: MainPanel, activity_id: int):
+        super().__init__(parent, title=f"Task: {main_panel._activity_name(activity_id)}", size=(420, 360))
+        self.controller = controller
+        self.main_panel = main_panel
+        self.activity_id = activity_id
+        self.SetBackgroundColour(CARD)
+        self._build_ui()
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+
+    def _build_ui(self) -> None:
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        heading = wx.StaticText(self, label=self.main_panel._activity_name(self.activity_id))
+        heading_font = heading.GetFont()
+        heading_font.MakeBold()
+        heading_font.PointSize += 2
+        heading.SetFont(heading_font)
+        heading.SetForegroundColour(ACCENT)
+        sizer.Add(heading, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 8)
+
+        self.timer_label = wx.StaticText(self, label="00:00:00", style=wx.ALIGN_CENTER_HORIZONTAL)
+        timer_font = self.timer_label.GetFont()
+        timer_font.PointSize += 6
+        self.timer_label.SetFont(timer_font)
+        self.timer_label.SetForegroundColour(TEXT_ON_DARK)
+        sizer.Add(self.timer_label, 0, wx.EXPAND | wx.ALL, 6)
+
+        target_row = wx.BoxSizer(wx.HORIZONTAL)
+        target_row.Add(wx.StaticText(self, label="Plan (hours)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        self.target_input = wx.SpinCtrlDouble(self, min=0, max=24, inc=0.25, initial=1.0)
+        target_row.Add(self.target_input, 0, wx.ALL, 4)
+        self.progress = wx.Gauge(self, range=100)
+        target_row.Add(self.progress, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        sizer.Add(target_row, 0, wx.EXPAND)
+
+        btns = wx.BoxSizer(wx.HORIZONTAL)
+        for label, handler in (("Start", self.on_start), ("Pause", self.on_pause), ("Stop", self.on_stop)):
+            btn = wx.Button(self, label=label)
+            btn.SetBackgroundColour(SECONDARY)
+            btn.SetForegroundColour("white")
+            btn.Bind(wx.EVT_BUTTON, handler)
+            btns.Add(btn, 1, wx.ALL, 4)
+        sizer.Add(btns, 0, wx.EXPAND)
+
+        hint = wx.StaticText(
+            self,
+            label="Floating task windows mirror the main dashboard but stay focused on a single activity.",
+        )
+        hint.SetForegroundColour(MUTED)
+        sizer.Add(hint, 0, wx.ALL, 6)
+        self.SetSizer(sizer)
+
+    def _update_display(self, elapsed_seconds: float) -> None:
+        hours = int(elapsed_seconds) // 3600
+        minutes = (int(elapsed_seconds) % 3600) // 60
+        seconds = int(elapsed_seconds) % 60
+        self.timer_label.SetLabel(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        target = self.main_panel.active_targets.get(self.activity_id, self.target_input.GetValue())
+        if target > 0:
+            percent = min(100, int((elapsed_seconds / 3600.0) / target * 100))
+            self.progress.SetValue(percent)
+        else:
+            self.progress.SetValue(0)
+
+    def on_start(self, event: wx.CommandEvent) -> None:
+        target_hours = self.target_input.GetValue()
+        self.main_panel.active_targets[self.activity_id] = target_hours
+
+        def tick_cb(elapsed: float) -> None:
+            wx.CallAfter(self._update_display, elapsed)
+
+        def on_complete(elapsed: float) -> None:
+            wx.CallAfter(self.main_panel._handle_timer_complete, self.activity_id, elapsed)
+
+        self.main_panel._with_error_dialog(
+            "Starting timer",
+            lambda: self.controller.start_timer(self.activity_id, tick_cb, target_hours, on_complete),
+        )
+
+    def on_pause(self, event: wx.CommandEvent) -> None:
+        self.main_panel._with_error_dialog("Pausing timer", lambda: self.controller.pause_timer(self.activity_id))
+
+    def on_stop(self, event: wx.CommandEvent) -> None:
+        self.main_panel._complete_session(self.activity_id, "Stop session", allow_reason=True)
+
+    def on_close(self, event: wx.CloseEvent) -> None:  # type: ignore[override]
+        if self.activity_id in self.main_panel.task_windows:
+            del self.main_panel.task_windows[self.activity_id]
+        event.Skip()
 
 
 class StudyTrackerFrame(wx.Frame):
