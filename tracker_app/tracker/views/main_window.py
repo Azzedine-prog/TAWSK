@@ -478,7 +478,8 @@ class MainPanel(wx.Panel):
         # Floating, Vector Canoe-inspired layout where panes feel like modular instruments
         self.mgr.GetPane("activities").Left().Floatable(True).Caption("Activities dock")
         self.mgr.GetPane("session").Float().BestSize(480, 240).Caption("Timer module")
-        self.mgr.GetPane("objectives").Float().Position(420, 320).BestSize(420, 220)
+        # Use floating position to avoid AUI argument errors on some platforms
+        self.mgr.GetPane("objectives").Float().FloatingPosition(420, 320).BestSize(420, 220)
         self.mgr.GetPane("insights").Right().Floatable(True).BestSize(500, 400)
         self.mgr.GetPane("guide").Bottom().Floatable(True).BestSize(500, 180)
         self.mgr.Update()
