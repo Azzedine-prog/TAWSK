@@ -11,8 +11,9 @@ A cross-platform wxPython desktop app for daily study/work tracking with timers,
 - Persistent SQLite storage, configurable settings, and structured logging.
 - Polished Microsoft/LinkedIn-inspired UI with accent header bar, card surfaces, contextual help, and activity tips on selection.
 - Rich KPI pack (planned vs actual, focus ratio, category mix, switches/day, overtime, completion rate, productivity score) surfaced in the Statistics tab.
-- TensorFlow-ready AI assistant for duration/priority suggestions, daily plans, and pattern insights with graceful fallbacks when models are missing.
+- Gemini-powered AI assistant for duration/priority suggestions, daily plans, and pattern insights with TensorFlow/heuristic fallbacks when the API is unavailable.
 - Optional AI productivity score + insights powered by the external AI-Productivity-Tracker project (neutral fallback when the repo or models are absent).
+- Optional Firebase-backed sign-in/sign-up (set `FIREBASE_CREDENTIALS` or fall back to local secure storage) so user context persists across machines.
 - Packaging for Windows (.exe via PyInstaller) and Debian/Ubuntu (.deb via dpkg-deb) plus GitHub Actions CI/CD.
 
 ## Project Structure

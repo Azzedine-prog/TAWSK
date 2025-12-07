@@ -9,6 +9,8 @@ def test_to_toml_roundtrip_no_last_activity():
         last_window_height=700,
         last_selected_activity=None,
         last_layout="abc",
+        user_id="default-user",
+        firebase_credentials="",
     )
 
     toml_text = cfg.to_toml()
@@ -22,6 +24,8 @@ def test_to_toml_roundtrip_no_last_activity():
         "last_selected_activity": "",
         "last_layout": "abc",
         "show_help_tips": True,
+        "user_id": "default-user",
+        "firebase_credentials": "",
     })
     assert parsed.last_selected_activity is None
     assert parsed.last_layout == "abc"
@@ -36,6 +40,8 @@ def test_to_toml_with_last_activity():
         last_window_height=700,
         last_selected_activity=3,
         last_layout="abc",
+        user_id="someone",
+        firebase_credentials="creds.json",
     )
 
     toml_text = cfg.to_toml()
@@ -49,6 +55,8 @@ def test_to_toml_with_last_activity():
         "last_selected_activity": 3,
         "last_layout": "abc",
         "show_help_tips": False,
+        "user_id": "someone",
+        "firebase_credentials": "creds.json",
     })
     assert parsed.last_selected_activity == 3
     assert parsed.last_layout == "abc"

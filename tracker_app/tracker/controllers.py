@@ -33,6 +33,8 @@ class AppConfig:
     last_selected_activity: Optional[int] = None
     last_layout: str = ""
     show_help_tips: bool = True
+    user_id: str = "default-user"
+    firebase_credentials: str = ""
 
     @classmethod
     def from_toml(cls, data: dict) -> "AppConfig":
@@ -53,6 +55,8 @@ class AppConfig:
             last_selected_activity=last_activity,
             last_layout=data.get("last_layout", ""),
             show_help_tips=bool(data.get("show_help_tips", True)),
+            user_id=data.get("user_id", "default-user"),
+            firebase_credentials=data.get("firebase_credentials", ""),
         )
 
     def to_toml(self) -> str:
@@ -69,6 +73,8 @@ class AppConfig:
             f"last_selected_activity = {last_activity_value}",
             f"last_layout = \"{self.last_layout}\"",
             f"show_help_tips = {str(bool(self.show_help_tips)).lower()}",
+            f"user_id = \"{self.user_id}\"",
+            f"firebase_credentials = \"{self.firebase_credentials}\"",
         ]
         return "\n".join(lines) + "\n"
 

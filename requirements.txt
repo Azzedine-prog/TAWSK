@@ -11,3 +11,5 @@ numpy
 scikit-learn
 joblib
 ics
+google-generativeai
+firebase-admin

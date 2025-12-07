@@ -5,3 +5,5 @@ last_window_height = 700
 last_selected_activity = ""
 last_layout = ""
 show_help_tips = true
+user_id = "default-user"
+firebase_credentials = ""

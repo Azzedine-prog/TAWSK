@@ -1,4 +1,4 @@
-"""Public API for TensorFlow-powered features with graceful fallbacks."""
+"""Public API for AI-powered features with Gemini-first fallbacks."""
 from __future__ import annotations
 
 import logging
@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import data_pipeline, models
+from . import gemini_client
 
 LOGGER = logging.getLogger(__name__)
 PRIORITY_LABELS = ["Low", "Medium", "High", "Critical"]
@@ -31,7 +32,11 @@ def _load_model(path: Path) -> Optional[Any]:
 
 
 def predict_duration(title: str, description: str, category: str, priority: str) -> Optional[float]:
-    """Predict duration; returns None if model unavailable."""
+    """Predict duration using Gemini when available with TF fallback."""
+
+    gemini_guess = gemini_client.suggest_duration(title, description, category, priority)
+    if gemini_guess is not None:
+        return gemini_guess
 
     model = _load_model(MODELS_DIR / "duration_model")
     if model is None:
@@ -45,6 +50,10 @@ def predict_duration(title: str, description: str, category: str, priority: str)
 
 
 def suggest_priority(task: Dict[str, Any]) -> str:
+    gemini_pick = gemini_client.suggest_priority(task)
+    if gemini_pick:
+        return gemini_pick
+
     model = _load_model(MODELS_DIR / "priority_model")
     if model is None:
         LOGGER.info("Priority model not available; returning heuristic")
@@ -69,7 +78,9 @@ def suggest_priority(task: Dict[str, Any]) -> str:
 
 
 def generate_daily_plan(target_date: date, tasks: Iterable[Dict[str, Any]], history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Provide a naive schedule ordering by due date and priority."""
+    gemini_plan = gemini_client.generate_daily_plan(target_date, tasks, history)
+    if gemini_plan:
+        return gemini_plan
 
     tasks_list = list(tasks)
     tasks_list.sort(key=lambda t: (t.get("due_date") or target_date, PRIORITY_LABELS.index(t.get("priority", "Medium"))))
@@ -82,6 +93,10 @@ def generate_daily_plan(target_date: date, tasks: Iterable[Dict[str, Any]], hist
 
 
 def analyze_patterns(history: List[Dict[str, Any]]) -> List[str]:
+    gemini_insights = gemini_client.analyze_patterns(history)
+    if gemini_insights:
+        return gemini_insights
+
     messages = []
     if not history:
         return ["No history yet. Track tasks to unlock insights."]

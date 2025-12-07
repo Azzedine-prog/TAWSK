@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import tempfile
 from datetime import date, datetime, timedelta
@@ -27,12 +28,17 @@ from tracker_app.tracker.controllers import AppController, ConfigManager, CONFIG
 
 LOGGER = logging.getLogger(__name__)
 PRIMARY = "#4A90E2"  # Calm modern blue
+PRIMARY_LIGHT = "#6AAAF0"
+PRIMARY_DARK = "#2F73C9"
 SECONDARY = "#6AAAF0"  # Hover/highlight
 ACCENT = "#63C297"  # Productivity green
 BACKGROUND = "#F6F7FB"
 SURFACE = "#FFFFFF"
 SURFACE_VAR = "#F0F1F5"
 CARD = "#FFFFFF"
+TEXT_PRIMARY = "#1E1F22"
+TEXT_SECONDARY = "#4D4F57"
+TEXT_MUTED = "#8A8C93"
 TEXT_ON_DARK = "#1E1F22"
 MUTED = "#8A8C93"
 ERROR = "#E14C4C"
@@ -813,7 +819,12 @@ class MainPanel(wx.ScrolledWindow):
         self.plan_totals: Dict[int, float] = {}
         self.plan_days: Dict[int, int] = {}
         self.mgr: Optional[wx.aui.AuiManager] = None
-        self.current_user_id = "default-user"
+        self.current_user_id = config_manager.config.user_id or "default-user"
+        from tracker_app.core.auth import FirebaseAuthManager
+
+        self.auth_manager = FirebaseAuthManager(CONFIG_DIR)
+        if self.config_manager.config.firebase_credentials and not os.getenv("FIREBASE_CREDENTIALS"):
+            os.environ["FIREBASE_CREDENTIALS"] = self.config_manager.config.firebase_credentials
         self.task_windows: Dict[int, "TaskFrame"] = {}
         self._focus_mode_enabled: bool = False
         self.advanced_mode: bool = False
@@ -939,6 +950,7 @@ class MainPanel(wx.ScrolledWindow):
         add_button(settings_bar, "Theme", wx.ART_HELP_SETTINGS, self._toggle_theme, "Switch theme")
         add_button(settings_bar, "Notifications", wx.ART_TIP, self._configure_notifications, "Reminders")
         add_button(settings_bar, "Shortcuts", wx.ART_TICK_MARK, self._show_shortcuts, "Keyboard map")
+        add_button(settings_bar, "Account", wx.ART_NEW_DIR, self._prompt_login, "Sign in / Sign up (Firebase)")
 
         # Help page
         help_page = RB.RibbonPage(ribbon, wx.ID_ANY, "Help")
@@ -950,6 +962,45 @@ class MainPanel(wx.ScrolledWindow):
 
         ribbon.Realize()
         return ribbon
+
+    def _prompt_login(self, _event: Optional[wx.Event]) -> None:
+        """Prompt for Firebase/local login or signup."""
+
+        dialog = wx.Dialog(self, title="Sign in / Sign up")
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        mode_choice = wx.RadioBox(dialog, label="Mode", choices=["Sign in", "Sign up"], majorDimension=1)
+        email = wx.TextCtrl(dialog, value=self.current_user_id if "@" in self.current_user_id else "")
+        password = wx.TextCtrl(dialog, style=wx.TE_PASSWORD)
+        email.SetHint("email@example.com")
+        password.SetHint("password")
+        vbox.Add(mode_choice, 0, wx.ALL | wx.EXPAND, 6)
+        vbox.Add(wx.StaticText(dialog, label="Email"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        vbox.Add(email, 0, wx.ALL | wx.EXPAND, 6)
+        vbox.Add(wx.StaticText(dialog, label="Password"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        vbox.Add(password, 0, wx.ALL | wx.EXPAND, 6)
+        buttons = dialog.CreateButtonSizer(wx.OK | wx.CANCEL)
+        vbox.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 6)
+        dialog.SetSizerAndFit(vbox)
+
+        if dialog.ShowModal() == wx.ID_OK:
+            email_val = email.GetValue().strip()
+            pwd_val = password.GetValue().strip()
+            if not email_val or not pwd_val:
+                wx.MessageBox("Email and password are required", "Login", wx.ICON_WARNING)
+                dialog.Destroy()
+                return
+            if mode_choice.GetSelection() == 0:
+                user_id = self.auth_manager.sign_in(email_val, pwd_val)
+            else:
+                user_id = self.auth_manager.sign_up(email_val, pwd_val)
+            if user_id:
+                self.current_user_id = user_id
+                self.config_manager.config.user_id = user_id
+                self.config_manager.save()
+                wx.MessageBox(f"Signed in as {user_id}", "Login", wx.ICON_INFORMATION)
+            else:
+                wx.MessageBox("Invalid credentials", "Login", wx.ICON_ERROR)
+        dialog.Destroy()
 
     def _build_ui(self) -> None:
         self.SetBackgroundColour(BACKGROUND)
