@@ -2822,22 +2822,26 @@ class MainPanel(wx.ScrolledWindow):
         if self.selected_activity is None:
             wx.MessageBox("Select an activity first", "Info")
             return
+        activity_id = self.selected_activity
         total_hours, target_hours, plan_days = self._compute_plan_hours()
-        self.active_targets[self.selected_activity] = target_hours
-        self.plan_totals[self.selected_activity] = total_hours
-        self.plan_days[self.selected_activity] = plan_days
+        self.active_targets[activity_id] = target_hours
+        self.plan_totals[activity_id] = total_hours
+        self.plan_days[activity_id] = plan_days
 
         def tick_cb(elapsed: float) -> None:
-            wx.CallAfter(self._update_timer_display, self.selected_activity, elapsed)
+            wx.CallAfter(self._update_timer_display, activity_id, elapsed)
 
         def on_complete(elapsed: float) -> None:
-            wx.CallAfter(self._handle_timer_complete, self.selected_activity, elapsed)
+            wx.CallAfter(self._handle_timer_complete, activity_id, elapsed)
 
         self._with_error_dialog(
             "Starting timer",
-            lambda: self.controller.start_timer(self.selected_activity, tick_cb, target_hours, on_complete),
+            lambda: self.controller.start_timer(activity_id, tick_cb, target_hours, on_complete),
         )
-        self._ensure_task_window(self.selected_activity)
+        self.controller.set_ongoing_task(activity_id)
+        self._update_ongoing_indicator()
+        self._refresh_task_board(self.controller.list_activities())
+        self._ensure_task_window(activity_id)
 
     def on_pause(self, event: wx.Event) -> None:
         if self.selected_activity is None:
@@ -2847,6 +2851,7 @@ class MainPanel(wx.ScrolledWindow):
             self.controller.pause_focus_session(self.selected_activity)
         else:
             self._with_error_dialog("Pausing timer", lambda: self.controller.pause_timer(self.selected_activity))
+        self._update_ongoing_indicator()
 
     def on_stop(self, event: wx.Event) -> None:
         if self.selected_activity is None:
@@ -2856,6 +2861,7 @@ class MainPanel(wx.ScrolledWindow):
             self._complete_focus_session(self.selected_activity, session.work_elapsed_seconds)
         else:
             self._complete_session(self.selected_activity, "Stop session", allow_reason=True)
+        self._update_ongoing_indicator()
 
     def on_reset(self, event: wx.Event) -> None:
         if self.selected_activity is None:
@@ -2866,6 +2872,7 @@ class MainPanel(wx.ScrolledWindow):
             self._with_error_dialog("Resetting timer", lambda: self.controller.reset_timer(self.selected_activity))
         self.timer_label.SetLabel("00:00:00")
         self.progress.SetValue(0)
+        self._update_ongoing_indicator()
 
     def _update_timer_display(self, activity_id: int, elapsed_seconds: float) -> None:
         if not getattr(self, "_session_panel_alive", True):
@@ -2883,6 +2890,7 @@ class MainPanel(wx.ScrolledWindow):
             return
         target = self.active_targets.get(activity_id, self.target_input.GetValue())
         self._update_progress(elapsed_seconds / 3600.0, target)
+        self._update_ongoing_indicator()
 
     def _update_progress(self, elapsed_hours: float, target_hours: float) -> None:
         if not getattr(self, "_session_panel_alive", True):
