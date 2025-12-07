@@ -2553,7 +2553,12 @@ class MainPanel(wx.ScrolledWindow):
     def _on_board_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
         self.selected_activity = event.GetData()
         if self.selected_activity:
-            self._sync_plan_from_activity(self.selected_activity)
+            # Sync the planning controls with the newly selected activity; guard
+            # against older layouts that may dispatch selection before the class
+            # is fully initialised.
+            sync_fn = getattr(self, "_sync_plan_from_activity", None)
+            if sync_fn:
+                sync_fn(self.selected_activity)
 
     def _open_task_timer_from_board(self, event: wx.ListEvent) -> None:  # type: ignore[override]
         self.selected_activity = event.GetData()
@@ -3115,14 +3120,20 @@ class TaskFrame(wx.Frame):
         self.Layout()
 
     def _update_display(self, elapsed_seconds: float) -> None:
-        if getattr(self, "_closed", False) or not getattr(self, "timer_label", None):
+        if getattr(self, "_closed", False):
             return
-        if not self.timer_label.IsOk():
+        label = getattr(self, "timer_label", None)
+        if not label:
             return
         hours = int(elapsed_seconds) // 3600
         minutes = (int(elapsed_seconds) % 3600) // 60
         seconds = int(elapsed_seconds) % 60
-        self.timer_label.SetLabel(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        try:
+            label.SetLabel(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        except RuntimeError:
+            # The window may have been destroyed between timer ticks.
+            self._closed = True
+            return
         target = self.main_panel.active_targets.get(self.activity_id, self.target_input.GetValue())
         if target > 0:
             percent = min(100, int((elapsed_seconds / 3600.0) / target * 100))
