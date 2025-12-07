@@ -78,6 +78,7 @@ tests/
 ## Development
 - Configure logging outputs to `~/.study_tracker/logs/app.log`.
 - Default config stored at `~/.study_tracker/config.toml` (derived from `tracker_app/config/default_config.toml`).
+- Optional API keys: copy `tracker_app/config/api_keys.example.toml` to `~/.study_tracker/api_keys.toml` and fill in Gemini and Firebase values; they are loaded automatically on startup when environment variables are not set.
 - Run lint/tests: `flake8 tracker_app tests` and `pytest`.
 
 ## Build Scripts

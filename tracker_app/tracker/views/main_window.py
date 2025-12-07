@@ -361,7 +361,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
         return bitmap
 
     def update_charts(self, stats, entries, kpis, start: date, end: date) -> None:
-        if not stats:
+        if not stats or not entries:
             self.clear()
             return
 
@@ -383,14 +383,23 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 per_day_actual[entry_date] = per_day_actual.get(entry_date, 0.0) + (hours or 0.0)
                 per_day_planned[entry_date] = per_day_planned.get(entry_date, 0.0) + (target or 0.0)
             days_sorted = sorted(per_day_actual.keys())
-            fig2, ax2 = plt.subplots(figsize=(5, 3))
-            ax2.plot(days_sorted, [per_day_actual[d] for d in days_sorted], marker="o", color=PRIMARY, label="Actual")
-            ax2.plot(days_sorted, [per_day_planned.get(d, 0.0) for d in days_sorted], marker="s", color=ACCENT, label="Planned")
-            ax2.set_title("Planned vs actual")
-            ax2.set_ylabel("Hours")
-            ax2.legend()
-            fig2.autofmt_xdate(rotation=25)
-            self.chart_planned.SetBitmap(self._to_bitmap(fig2))
+            if days_sorted:
+                fig2, ax2 = plt.subplots(figsize=(5, 3))
+                ax2.plot(days_sorted, [per_day_actual[d] for d in days_sorted], marker="o", color=PRIMARY, label="Actual")
+                ax2.plot(
+                    days_sorted,
+                    [per_day_planned.get(d, 0.0) for d in days_sorted],
+                    marker="s",
+                    color=ACCENT,
+                    label="Planned",
+                )
+                ax2.set_title("Planned vs actual")
+                ax2.set_ylabel("Hours")
+                ax2.legend()
+                fig2.autofmt_xdate(rotation=25)
+                self.chart_planned.SetBitmap(self._to_bitmap(fig2))
+            else:
+                self.chart_planned.SetBitmap(wx.NullBitmap)
 
             # Focus trend line
             focus_by_day: Dict[str, float] = {}
@@ -416,13 +425,16 @@ class StatsChartsPanel(wx.ScrolledWindow):
             category_hours: Dict[str, float] = {}
             for _date, activity_name, hours, *_rest in entries:
                 category_hours[activity_name] = category_hours.get(activity_name, 0.0) + (hours or 0.0)
-            fig4, ax4 = plt.subplots(figsize=(4.5, 3))
             labels = list(category_hours.keys())
             values = list(category_hours.values())
-            pastel = ["#AEE3FF", "#FFCBAA", "#A890FF", "#FFEFA8", ACCENT, PRIMARY]
-            ax4.pie(values, labels=labels, autopct="%1.0f%%", colors=pastel[: len(labels)])
-            ax4.set_title("Category mix")
-            self.chart_category.SetBitmap(self._to_bitmap(fig4))
+            if labels and any(values):
+                fig4, ax4 = plt.subplots(figsize=(4.5, 3))
+                pastel = ["#AEE3FF", "#FFCBAA", "#A890FF", "#FFEFA8", ACCENT, PRIMARY]
+                ax4.pie(values, labels=labels, autopct="%1.0f%%", colors=pastel[: len(labels)])
+                ax4.set_title("Category mix")
+                self.chart_category.SetBitmap(self._to_bitmap(fig4))
+            else:
+                self.chart_category.SetBitmap(wx.NullBitmap)
 
             # Completion rate pie
             total_tasks = len(entries)
@@ -813,6 +825,7 @@ class MainPanel(wx.ScrolledWindow):
         super().__init__(parent, style=wx.VSCROLL | wx.HSCROLL)
         self.controller = controller
         self.config_manager = config_manager
+        self.ai = AIAssistantService(controller)
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
         self.saved_layout: str = config_manager.config.last_layout
         self.active_targets: Dict[int, float] = {}
@@ -1393,8 +1406,10 @@ class MainPanel(wx.ScrolledWindow):
             return
         by_day: Dict[date, float] = {}
         for entry in entries:
-            by_day.setdefault(entry.date, 0.0)
-            by_day[entry.date] += entry.duration_hours
+            entry_date = date.fromisoformat(entry[0]) if isinstance(entry[0], str) else entry[0]
+            hours = entry[2] if len(entry) > 2 else 0.0
+            by_day.setdefault(entry_date, 0.0)
+            by_day[entry_date] += hours or 0.0
         lines = [f"{d.isoformat()}: {hours:.2f}h" for d, hours in sorted(by_day.items())]
         wx.MessageBox("\n".join(lines), "Weekly overview")
 
@@ -2198,18 +2213,6 @@ class MainPanel(wx.ScrolledWindow):
 
         self._with_error_dialog("Loading activities", action)
 
-    def on_activity_selected(self, event: Optional[wx.ListEvent]) -> None:
-        idx = event.GetIndex() if event else self.activity_list.GetFirstSelected()
-        if idx == wx.NOT_FOUND:
-            return
-        activity_id = self.activity_list.GetItemData(idx)
-        act = next((a for a in self.controller.list_activities() if a.id == activity_id), None)
-        if act:
-            desc = act.description or "No description set."
-            planned = f"Planned: {act.default_target_hours:.2f}h"
-            tags = f"Tags: {act.tags}" if act.tags else ""
-            self.activity_list.SetToolTip("\n".join(filter(None, [act.name, desc, planned, tags])))
-
     def _activity_name(self, activity_id: int) -> str:
         activity = next((a.name for a in self.controller.list_activities() if a.id == activity_id), "Activity")
         return activity
@@ -2247,8 +2250,11 @@ class MainPanel(wx.ScrolledWindow):
         self.activity_list.PopupMenu(menu)
         menu.Destroy()
 
-    def on_activity_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
-        self.selected_activity = event.GetData()
+    def on_activity_selected(self, event: Optional[wx.ListEvent]) -> None:  # type: ignore[override]
+        idx = event.GetIndex() if event else self.activity_list.GetFirstSelected()
+        if idx == wx.NOT_FOUND:
+            return
+        self.selected_activity = self.activity_list.GetItemData(idx)
         activity = next((a for a in self.controller.list_activities() if a.id == self.selected_activity), None)
         if activity:
             total, per_day, plan_days = self._current_plan_for(activity.id)

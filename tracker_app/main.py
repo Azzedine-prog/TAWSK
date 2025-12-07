@@ -7,6 +7,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING
+import os
+import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -31,6 +33,29 @@ StudyTrackerApp = None
 LOG_DIR = Path.home() / ".study_tracker" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "app.log"
+
+
+def _load_api_keys() -> None:
+    """Load Gemini and Firebase credentials from a local TOML file if present."""
+
+    config_dir = Path.home() / ".study_tracker"
+    candidate = config_dir / "api_keys.toml"
+    fallback = PROJECT_ROOT / "tracker_app" / "config" / "api_keys.example.toml"
+    path = candidate if candidate.exists() else fallback
+    if not path.exists():
+        return
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logging.exception("Unable to read API key file %s", path)
+        return
+
+    gemini_key = data.get("gemini_api_key")
+    firebase_creds = data.get("firebase_credentials")
+    if gemini_key and not os.getenv("GEMINI_API_KEY"):
+        os.environ["GEMINI_API_KEY"] = gemini_key
+    if firebase_creds and not os.getenv("FIREBASE_CREDENTIALS"):
+        os.environ["FIREBASE_CREDENTIALS"] = firebase_creds
 
 
 def ensure_wx_dependencies() -> None:
@@ -89,6 +114,7 @@ def build_controller(config_manager: ConfigManager) -> AppController:
 
 
 def main() -> None:
+    _load_api_keys()
     load_runtime_modules()
     configure_logging()
     config_manager = ConfigManager()
