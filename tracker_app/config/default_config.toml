@@ -1,0 +1,11 @@
+export_path = "statistics.xlsx"
+default_range_days = 7
+last_window_width = 1000
+last_window_height = 700
+last_selected_activity = ""
+last_layout = ""
+last_workspace = "Workspace 1"
+show_help_tips = true
+user_id = "default-user"
+firebase_credentials = ""
+show_focus_on_start = false

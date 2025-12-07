@@ -1,0 +1,6 @@
+# Copy this file to ~/.study_tracker/api_keys.toml and fill in your secrets.
+# Values are picked up automatically at startup if environment variables are not set.
+
+gemini_api_key = ""
+# Path to your Firebase service account JSON file
+firebase_credentials = ""
