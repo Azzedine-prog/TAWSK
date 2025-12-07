@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -37,6 +37,9 @@ class AppConfig:
     user_id: str = "default-user"
     firebase_credentials: str = ""
     show_focus_on_start: bool = False
+    current_ongoing_task: Optional[int] = None
+    task_queue: list[int] = field(default_factory=list)
+    auto_start_next_task: bool = False
 
     @classmethod
     def from_toml(cls, data: dict) -> "AppConfig":
@@ -61,6 +64,9 @@ class AppConfig:
             user_id=data.get("user_id", "default-user"),
             firebase_credentials=data.get("firebase_credentials", ""),
             show_focus_on_start=bool(data.get("show_focus_on_start", False)),
+            current_ongoing_task=last_activity,
+            task_queue=list(data.get("task_queue", []) or []),
+            auto_start_next_task=bool(data.get("auto_start_next_task", False)),
         )
 
     def to_toml(self) -> str:
@@ -81,6 +87,9 @@ class AppConfig:
             f"user_id = \"{self.user_id}\"",
             f"firebase_credentials = \"{self.firebase_credentials}\"",
             f"show_focus_on_start = {str(bool(self.show_focus_on_start)).lower()}",
+            f"current_ongoing_task = {last_activity_value}",
+            f"task_queue = [{', '.join(str(t) for t in self.task_queue)}]",
+            f"auto_start_next_task = {str(bool(self.auto_start_next_task)).lower()}",
         ]
         return "\n".join(lines) + "\n"
 
@@ -116,6 +125,13 @@ class AppController:
         self.exporter = exporter
         self.config_manager = config_manager
         self.today = date.today()
+        self.current_ongoing_task: Optional[int] = config_manager.config.current_ongoing_task
+        self.task_queue: list[int] = [
+            t
+            for t in (config_manager.config.task_queue or [])
+            if any(a.id == t for a in self.storage.get_activities())
+        ]
+        self.auto_start_next_task: bool = bool(config_manager.config.auto_start_next_task)
 
     # Activity management
     def list_activities(self) -> List[Activity]:
@@ -218,6 +234,56 @@ class AppController:
             plan_days=plan_days,
         )
         return elapsed
+
+    # Ongoing task + queue helpers
+    def set_ongoing_task(self, activity_id: Optional[int]) -> None:
+        self.current_ongoing_task = activity_id
+        self.config_manager.config.current_ongoing_task = activity_id
+        self.config_manager.save()
+
+    def get_ongoing_task(self) -> Optional[Activity]:
+        if self.current_ongoing_task is None:
+            return None
+        return next((a for a in self.storage.get_activities() if a.id == self.current_ongoing_task), None)
+
+    def add_to_queue(self, activity_id: int) -> None:
+        if activity_id not in self.task_queue:
+            self.task_queue.append(activity_id)
+            self.config_manager.config.task_queue = self.task_queue
+            self.config_manager.save()
+
+    def remove_from_queue(self, activity_id: int) -> None:
+        self.task_queue = [t for t in self.task_queue if t != activity_id]
+        self.config_manager.config.task_queue = self.task_queue
+        self.config_manager.save()
+
+    def clear_queue(self) -> None:
+        self.task_queue = []
+        self.config_manager.config.task_queue = []
+        self.config_manager.save()
+
+    def next_from_queue(self) -> Optional[int]:
+        while self.task_queue:
+            nxt = self.task_queue.pop(0)
+            if any(a.id == nxt for a in self.storage.get_activities()):
+                self.config_manager.config.task_queue = self.task_queue
+                self.config_manager.save()
+                return nxt
+        self.config_manager.config.task_queue = []
+        self.config_manager.save()
+        return None
+
+    def set_auto_start_next(self, enabled: bool) -> None:
+        self.auto_start_next_task = enabled
+        self.config_manager.config.auto_start_next_task = enabled
+        self.config_manager.save()
+
+    def get_queue_activities(self) -> list[Activity]:
+        activities = {a.id: a for a in self.storage.get_activities()}
+        return [activities[t] for t in self.task_queue if t in activities]
+
+    def total_hours_for_activity(self, activity_id: int) -> float:
+        return self.storage.get_total_hours_for_activity(activity_id)
 
     # Focus / Pomodoro operations
     def start_focus_session(

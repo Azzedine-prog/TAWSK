@@ -1026,6 +1026,60 @@ class MainPanel(wx.ScrolledWindow):
         ribbon.Realize()
         return ribbon
 
+    def _build_ongoing_indicator(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent)
+        panel.SetBackgroundColour(SURFACE)
+        sizer = wx.BoxSizer(wx.HORIZONTAL)
+        title = wx.StaticText(panel, label="Ongoing task")
+        title_font = title.GetFont()
+        title_font.MakeBold()
+        title.SetFont(title_font)
+        self.ongoing_name = wx.StaticText(panel, label="None")
+        self.ongoing_name.SetFont(wx.FontInfo(14).Bold())
+        self.ongoing_meta = wx.StaticText(panel, label="--")
+        self.ongoing_time = wx.StaticText(panel, label="Today: 0.00h • Total: 0.00h")
+        self.ongoing_state = wx.StaticText(panel, label="State: Idle")
+        self.ongoing_progress = wx.Gauge(panel, range=100, size=(140, -1))
+        sizer.Add(title, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        sizer.Add(self.ongoing_name, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 8)
+        sizer.Add(self.ongoing_meta, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 8)
+        sizer.Add(self.ongoing_time, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 8)
+        sizer.Add(self.ongoing_state, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 8)
+        sizer.Add(self.ongoing_progress, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 8)
+        panel.SetSizer(sizer)
+        return panel
+
+    def _build_queue_panel(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent)
+        panel.SetBackgroundColour(SURFACE_VAR)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        header = wx.BoxSizer(wx.HORIZONTAL)
+        header.Add(wx.StaticText(panel, label="Task queue"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        self.auto_start_checkbox = wx.CheckBox(panel, label="Auto-start next")
+        self.auto_start_checkbox.SetValue(self.controller.auto_start_next_task)
+        self.auto_start_checkbox.Bind(wx.EVT_CHECKBOX, lambda evt: self.controller.set_auto_start_next(self.auto_start_checkbox.GetValue()))
+        header.AddStretchSpacer()
+        header.Add(self.auto_start_checkbox, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        sizer.Add(header, 0, wx.EXPAND)
+
+        self.queue_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.BORDER_SIMPLE, size=(-1, 120))
+        for i, col in enumerate(["Task", "Priority", "Estimate"]):
+            self.queue_list.InsertColumn(i, col)
+        sizer.Add(self.queue_list, 1, wx.EXPAND | wx.ALL, 4)
+
+        btn_row = wx.BoxSizer(wx.HORIZONTAL)
+        add_btn = wx.Button(panel, label="Add selected")
+        remove_btn = wx.Button(panel, label="Remove")
+        clear_btn = wx.Button(panel, label="Clear")
+        for btn in (add_btn, remove_btn, clear_btn):
+            btn_row.Add(btn, 0, wx.ALL, 3)
+        add_btn.Bind(wx.EVT_BUTTON, self._queue_add_selected)
+        remove_btn.Bind(wx.EVT_BUTTON, self._queue_remove_selected)
+        clear_btn.Bind(wx.EVT_BUTTON, self._queue_clear)
+        sizer.Add(btn_row, 0, wx.ALIGN_LEFT)
+        panel.SetSizer(sizer)
+        return panel
+
     def _prompt_login(self, _event: Optional[wx.Event]) -> None:
         """Prompt for Firebase/local login or signup."""
 
@@ -1223,6 +1277,13 @@ class MainPanel(wx.ScrolledWindow):
             self.plan_hours_spin.SetValue(1.0)
         if hasattr(self, "per_day_label"):
             self.per_day_label.SetForegroundColour(TEXT_ON_DARK if not simple else TEXT_SECONDARY)
+        if hasattr(self, "queue_panel"):
+            self.queue_panel.Show(not simple)
+        if hasattr(self, "ongoing_meta"):
+            self.ongoing_meta.Show(not simple)
+            self.ongoing_state.Show(not simple)
+        self._refresh_queue_panel()
+        self._update_ongoing_indicator()
         self.Layout()
 
     def _maybe_show_first_help(self) -> None:
@@ -2268,12 +2329,18 @@ class MainPanel(wx.ScrolledWindow):
         intro.Wrap(520)
         board_sizer.Add(intro, 0, wx.ALL | wx.EXPAND, 4)
 
+        self.ongoing_panel = self._build_ongoing_indicator(board_card)
+        board_sizer.Add(self.ongoing_panel, 0, wx.EXPAND | wx.ALL, 4)
+
         self.task_board = wx.ListCtrl(board_card, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
         for i, heading in enumerate(["Priority", "Status", "Task", "Plan/day", "Total plan", "Today", "Tags"]):
             self.task_board.InsertColumn(i, heading)
         self.task_board.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_board_selected)
         self.task_board.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._open_task_timer_from_board)
         board_sizer.Add(self.task_board, 1, wx.EXPAND | wx.ALL, 4)
+
+        self.queue_panel = self._build_queue_panel(board_card)
+        board_sizer.Add(self.queue_panel, 0, wx.EXPAND | wx.ALL, 4)
 
         toolbar = wx.BoxSizer(wx.HORIZONTAL)
         def _styled(btn: wx.Button, bg: str) -> None:
@@ -2512,6 +2579,8 @@ class MainPanel(wx.ScrolledWindow):
             self.history_tab.load_activities()
             self.refresh_today()
             self._refresh_task_board(activities, today_entries)
+            self._refresh_queue_panel()
+            self._update_ongoing_indicator()
 
         self._with_error_dialog("Loading activities", action)
 
@@ -2569,6 +2638,26 @@ class MainPanel(wx.ScrolledWindow):
         activity = next((a.name for a in self.controller.list_activities() if a.id == activity_id), "Activity")
         return activity
 
+    def _queue_add_selected(self, event: wx.Event) -> None:
+        if self.selected_activity is None:
+            return
+        self.controller.add_to_queue(self.selected_activity)
+        self._refresh_queue_panel()
+
+    def _queue_remove_selected(self, event: wx.Event) -> None:
+        if not hasattr(self, "queue_list"):
+            return
+        idx = self.queue_list.GetFirstSelected()
+        if idx == -1:
+            return
+        activity_id = self.queue_list.GetItemData(idx)
+        self.controller.remove_from_queue(activity_id)
+        self._refresh_queue_panel()
+
+    def _queue_clear(self, event: wx.Event) -> None:
+        self.controller.clear_queue()
+        self._refresh_queue_panel()
+
     def _require_selection(self) -> Optional[int]:
         item = self.activity_list.GetFirstSelected()
         if item == -1:
@@ -2591,6 +2680,8 @@ class MainPanel(wx.ScrolledWindow):
             ("Pause", self.on_pause),
             ("Stop", self.on_stop),
             ("Reset", self.on_reset),
+            ("Set as ongoing", lambda evt: self._sync_plan_from_activity(self.selected_activity)),
+            ("Add to queue", self._queue_add_selected),
             ("Log food break", self.on_food_break),
             ("Open task window", self.on_open_task_window),
             ("Edit name", self.on_edit_activity),
@@ -2807,6 +2898,8 @@ class MainPanel(wx.ScrolledWindow):
                 self._session_panel_alive = False
                 return
 
+        self._update_ongoing_indicator()
+
     def _update_focus_display(
         self, activity_id: int, state: str, phase: str, work_seconds: float, remaining_seconds: float
     ) -> None:
@@ -2837,6 +2930,8 @@ class MainPanel(wx.ScrolledWindow):
             except RuntimeError:
                 self._session_panel_alive = False
 
+        self._update_ongoing_indicator()
+
     def _sync_plan_from_activity(self, activity_id: int) -> None:
         """Align plan controls with the selected activity or today's entry."""
         entry = self.controller.storage.get_daily_entry(date.today(), activity_id)
@@ -2853,6 +2948,10 @@ class MainPanel(wx.ScrolledWindow):
         self.plan_totals[activity_id] = total
         self.plan_days[activity_id] = plan_days
         self._update_task_window_plan(activity_id, total, per_day, plan_days)
+
+        # update ongoing indicator when selection changes
+        self.controller.set_ongoing_task(activity_id)
+        self._update_ongoing_indicator()
 
     def _complete_focus_session(self, activity_id: int, work_seconds: float) -> None:
         """Capture outcomes for a finished Pomodoro cycle and persist to history."""
@@ -3038,19 +3137,71 @@ class MainPanel(wx.ScrolledWindow):
         self._load_objectives()
         self._maybe_start_next(activity_id)
 
-    def _maybe_start_next(self, current_activity: int) -> None:
-        activities = [a for a in self.controller.list_activities() if a.id != current_activity]
-        if not activities:
+    def _update_ongoing_indicator(self) -> None:
+        """Refresh the ongoing task banner for both Easy and Advanced modes."""
+        if not hasattr(self, "ongoing_name"):
             return
-        labels = [a.name for a in activities]
-        dlg = wx.SingleChoiceDialog(self, "Begin another task?", "Next focus", labels)
-        if dlg.ShowModal() == wx.ID_OK:
-            choice = dlg.GetSelection()
-            next_activity = activities[choice]
-            self.selected_activity = next_activity.id
-            self.load_activities()
+        activity = self.controller.get_ongoing_task()
+        if not activity:
+            self.ongoing_name.SetLabel("None")
+            self.ongoing_meta.SetLabel("--")
+            self.ongoing_time.SetLabel("Today: 0.00h • Total: 0.00h")
+            self.ongoing_state.SetLabel("State: Idle")
+            self.ongoing_progress.SetValue(0)
+            return
+
+        entry = self.controller.storage.get_daily_entry(date.today(), activity.id)
+        today_hours = entry.duration_hours if entry else 0.0
+        total_hours = self.controller.total_hours_for_activity(activity.id)
+        timer = self.controller.timers.ensure_timer(activity.id)
+        state = "Running" if timer.is_running else "Paused" if timer.elapsed_seconds > 0 else "Idle"
+        target = self.active_targets.get(activity.id, entry.target_hours if entry else 0.0)
+        if target:
+            percent = min(100, int((today_hours / target) * 100))
+            self.ongoing_progress.SetValue(percent)
+        else:
+            self.ongoing_progress.SetValue(0)
+        meta = f"Priority: {getattr(activity, 'priority', 'Medium')} | Tags: {activity.tags or 'None'}"
+        self.ongoing_name.SetLabel(activity.name)
+        self.ongoing_meta.SetLabel(meta)
+        self.ongoing_time.SetLabel(f"Today: {today_hours:.2f}h • Total: {total_hours:.2f}h")
+        self.ongoing_state.SetLabel(f"State: {state}")
+
+    def _refresh_queue_panel(self) -> None:
+        if not hasattr(self, "queue_list"):
+            return
+        if not self.advanced_mode:
+            self.queue_panel.Hide()
+            return
+        self.queue_panel.Show()
+        self.queue_list.DeleteAllItems()
+        for act in self.controller.get_queue_activities():
+            idx = self.queue_list.InsertItem(self.queue_list.GetItemCount(), act.name)
+            self.queue_list.SetItem(idx, 1, getattr(act, "priority", "Medium"))
+            self.queue_list.SetItem(idx, 2, f"{act.default_target_hours:.1f}h")
+            self.queue_list.SetItemData(idx, act.id or -1)
+        for col in range(3):
+            self.queue_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+
+    def _maybe_start_next(self, current_activity: int) -> None:
+        next_activity_id = self.controller.next_from_queue()
+        if next_activity_id is None:
+            self._update_ongoing_indicator()
+            return
+        activities = {a.id: a for a in self.controller.list_activities()}
+        next_activity = activities.get(next_activity_id)
+        if not next_activity:
+            self._update_ongoing_indicator()
+            return
+        self.selected_activity = next_activity.id
+        self.controller.set_ongoing_task(next_activity.id)
+        self.load_activities()
+        if self.controller.auto_start_next_task:
             self.on_start(wx.CommandEvent())
-        dlg.Destroy()
+        else:
+            if wx.MessageBox(f"Next task in queue: {next_activity.name}. Start now?", "Queue", style=wx.YES_NO) == wx.YES:
+                self.on_start(wx.CommandEvent())
+        self._update_ongoing_indicator()
 
 
 class TaskFrame(wx.Frame):

@@ -312,6 +312,17 @@ class Storage:
             )
             return cur.fetchall()
 
+    def get_total_hours_for_activity(self, activity_id: int) -> float:
+        """Return cumulative duration for an activity across all time."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COALESCE(SUM(duration_hours), 0) FROM daily_entries WHERE activity_id = ?",
+                (activity_id,),
+            )
+            result = cur.fetchone()
+            return float(result[0] or 0.0)
+
     def get_statistics_by_activity(self, start_date: date, end_date: date) -> List[ActivityStats]:
         with self._get_conn() as conn:
             cur = conn.cursor()
