@@ -21,9 +21,11 @@ def test_to_toml_roundtrip_no_last_activity():
         "last_window_height": 700,
         "last_selected_activity": "",
         "last_layout": "abc",
+        "show_help_tips": True,
     })
     assert parsed.last_selected_activity is None
     assert parsed.last_layout == "abc"
+    assert parsed.show_help_tips is True
 
 
 def test_to_toml_with_last_activity():
@@ -46,6 +48,8 @@ def test_to_toml_with_last_activity():
         "last_window_height": 700,
         "last_selected_activity": 3,
         "last_layout": "abc",
+        "show_help_tips": False,
     })
     assert parsed.last_selected_activity == 3
     assert parsed.last_layout == "abc"
+    assert parsed.show_help_tips is False

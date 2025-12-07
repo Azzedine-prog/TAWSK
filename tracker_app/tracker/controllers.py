@@ -32,6 +32,7 @@ class AppConfig:
     last_window_height: int
     last_selected_activity: Optional[int] = None
     last_layout: str = ""
+    show_help_tips: bool = True
 
     @classmethod
     def from_toml(cls, data: dict) -> "AppConfig":
@@ -51,6 +52,7 @@ class AppConfig:
             last_window_height=int(data.get("last_window_height", 700)),
             last_selected_activity=last_activity,
             last_layout=data.get("last_layout", ""),
+            show_help_tips=bool(data.get("show_help_tips", True)),
         )
 
     def to_toml(self) -> str:
@@ -66,6 +68,7 @@ class AppConfig:
             f"last_window_height = {self.last_window_height}",
             f"last_selected_activity = {last_activity_value}",
             f"last_layout = \"{self.last_layout}\"",
+            f"show_help_tips = {str(bool(self.show_help_tips)).lower()}",
         ]
         return "\n".join(lines) + "\n"
 
@@ -242,14 +245,36 @@ class AppController:
         if not entries:
             return {}
 
+        def planned_per_day(row: tuple) -> float:
+            plan_total = row[8] if len(row) > 8 and row[8] is not None else row[4] if len(row) > 4 else 0.0
+            plan_days = row[9] if len(row) > 9 and row[9] else 1
+            target_hours = row[4] if len(row) > 4 and row[4] is not None else 0.0
+            if target_hours:
+                return target_hours
+            return (plan_total / plan_days) if plan_total else 0.0
+
         per_day: Dict[str, set] = {}
         daily_hours: Dict[str, float] = {}
         daily_planned: Dict[str, float] = {}
-        for entry_date, activity_name, hours, *_rest in entries:
+        plan_totals: Dict[str, float] = {}
+        for row in entries:
+            (
+                entry_date,
+                activity_name,
+                hours,
+                _obj,
+                target_hours,
+                completion_percent,
+                stop_reason,
+                comments,
+                plan_total_hours,
+                plan_days,
+            ) = (*row, 0, 1)[:10]
+            planned_value = target_hours if target_hours else (plan_total_hours / plan_days if plan_total_hours else 0.0)
             daily_hours[entry_date] = daily_hours.get(entry_date, 0.0) + (hours or 0.0)
             per_day.setdefault(entry_date, set()).add(activity_name)
-        for entry_date, _activity, _hours, _obj, target, *_rest in entries:
-            daily_planned[entry_date] = daily_planned.get(entry_date, 0.0) + (target or 0.0)
+            daily_planned[entry_date] = daily_planned.get(entry_date, 0.0) + planned_value
+            plan_totals[entry_date] = plan_totals.get(entry_date, 0.0) + (plan_total_hours or target_hours or 0.0)
 
         total_actual = sum(daily_hours.values())
         total_planned = sum(daily_planned.values())
@@ -289,10 +314,13 @@ class AppController:
         interruption_cost = interruption_events * 10  # minutes lost estimate
 
         accuracy_by_category = {}
-        for _date, activity_name, hours, _obj, target, *_rest in entries:
-            if target:
+        for row in entries:
+            activity_name = row[1]
+            hours = row[2]
+            planned = planned_per_day(row)
+            if planned:
                 ratios = accuracy_by_category.setdefault(activity_name, [])
-                ratios.append(hours / target)
+                ratios.append(hours / planned)
         category_accuracy = ", ".join(
             f"{name}: {sum(vals)/len(vals)*100:.0f}%" for name, vals in accuracy_by_category.items()
         )
@@ -309,7 +337,7 @@ class AppController:
             consistency_score = 100.0
 
         habit_streak = completed_tasks
-        procrastination = sum(1 for _d, _a, hours, _o, target, *_r in entries if target and hours > target * 1.3)
+        procrastination = sum(1 for row in entries if planned_per_day(row) and row[2] > planned_per_day(row) * 1.3)
 
         flow_efficiency = (focused_time / total_actual * 100) if total_actual else None
 

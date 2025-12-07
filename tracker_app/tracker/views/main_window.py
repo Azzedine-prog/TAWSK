@@ -723,7 +723,15 @@ class OutcomeDialog(wx.Dialog):
 class ActivityDialog(wx.Dialog):
     """Dialog to capture activity details including description and default plan."""
 
-    def __init__(self, parent: wx.Window, title: str, name: str = "", description: str = "", target: float = 1.0):
+    def __init__(
+        self,
+        parent: wx.Window,
+        title: str,
+        name: str = "",
+        description: str = "",
+        target: float = 1.0,
+        plan_days: int = 1,
+    ):
         super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
 
@@ -741,19 +749,56 @@ class ActivityDialog(wx.Dialog):
         main_sizer.Add(desc_label, 0, wx.ALL, 6)
         main_sizer.Add(self.desc_ctrl, 1, wx.EXPAND | wx.ALL, 6)
 
-        target_row = wx.BoxSizer(wx.HORIZONTAL)
-        target_row.Add(wx.StaticText(self, label="Default plan (hours)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
-        self.target_ctrl = wx.SpinCtrlDouble(self, min=0, max=24, inc=0.25, initial=target)
-        self.target_ctrl.SetToolTip("Pre-fill planned time when you start the timer")
-        target_row.Add(self.target_ctrl, 0, wx.ALL, 6)
-        main_sizer.Add(target_row, 0, wx.EXPAND)
+        plan_row = wx.BoxSizer(wx.HORIZONTAL)
+        plan_row.Add(wx.StaticText(self, label="Total"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        self.plan_days_ctrl = wx.SpinCtrl(self, min=0, max=30, initial=int(target // 24), size=(70, -1))
+        self.plan_days_ctrl.SetToolTip("Full days in the planned effort")
+        plan_row.Add(self.plan_days_ctrl, 0, wx.ALL, 2)
+        plan_row.Add(wx.StaticText(self, label="d"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        remaining_hours = target - (int(target // 24) * 24)
+        self.plan_hours_ctrl = wx.SpinCtrlDouble(self, min=0, max=72, inc=0.25, initial=max(0.0, remaining_hours))
+        self.plan_hours_ctrl.SetToolTip("Hours for this task plan")
+        plan_row.Add(self.plan_hours_ctrl, 0, wx.ALL, 2)
+        plan_row.Add(wx.StaticText(self, label="h"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        self.plan_minutes_ctrl = wx.SpinCtrl(self, min=0, max=59, initial=0, size=(70, -1))
+        self.plan_minutes_ctrl.SetToolTip("Extra minutes for fine-grained planning")
+        plan_row.Add(self.plan_minutes_ctrl, 0, wx.ALL, 2)
+        plan_row.Add(wx.StaticText(self, label="min"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        main_sizer.Add(plan_row, 0, wx.EXPAND)
+
+        split_row = wx.BoxSizer(wx.HORIZONTAL)
+        split_row.Add(wx.StaticText(self, label="Split across days"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        self.plan_split_days_ctrl = wx.SpinCtrl(self, min=1, max=30, initial=max(1, plan_days), size=(90, -1))
+        self.plan_split_days_ctrl.SetToolTip("How many days to spread this task")
+        split_row.Add(self.plan_split_days_ctrl, 0, wx.ALL, 2)
+        self.per_day_preview = wx.StaticText(self, label="Per-day: 1.00h")
+        self.per_day_preview.SetForegroundColour(TEXT_ON_DARK)
+        split_row.Add(self.per_day_preview, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        main_sizer.Add(split_row, 0, wx.EXPAND)
+
+        for ctrl in (self.plan_days_ctrl, self.plan_hours_ctrl, self.plan_minutes_ctrl, self.plan_split_days_ctrl):
+            ctrl.Bind(wx.EVT_SPINCTRL, self._update_preview)
+        self.plan_hours_ctrl.Bind(wx.EVT_SPINCTRLDOUBLE, self._update_preview)
+        self._update_preview(None)
 
         btn_sizer = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         main_sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 6)
         self.SetSizerAndFit(main_sizer)
 
-    def get_values(self) -> tuple[str, str, float]:
-        return self.name_ctrl.GetValue(), self.desc_ctrl.GetValue(), self.target_ctrl.GetValue()
+    def _update_preview(self, _event: Optional[wx.Event]) -> None:
+        total_hours = (self.plan_days_ctrl.GetValue() * 24) + self.plan_hours_ctrl.GetValue() + (
+            self.plan_minutes_ctrl.GetValue() / 60.0
+        )
+        split_days = max(1, self.plan_split_days_ctrl.GetValue())
+        per_day = total_hours / split_days if split_days else total_hours
+        self.per_day_preview.SetLabel(f"Per-day: {per_day:.2f}h")
+        self.Layout()
+
+    def get_values(self) -> tuple[str, str, float, int]:
+        total_hours = (self.plan_days_ctrl.GetValue() * 24) + self.plan_hours_ctrl.GetValue() + (
+            self.plan_minutes_ctrl.GetValue() / 60.0
+        )
+        return self.name_ctrl.GetValue(), self.desc_ctrl.GetValue(), total_hours, max(1, self.plan_split_days_ctrl.GetValue())
 
 
 class MainPanel(wx.ScrolledWindow):
@@ -770,6 +815,8 @@ class MainPanel(wx.ScrolledWindow):
         self.current_user_id = "default-user"
         self.task_windows: Dict[int, "TaskFrame"] = {}
         self._focus_mode_enabled: bool = False
+        self.advanced_mode: bool = False
+        self.show_help_tips: bool = config_manager.config.show_help_tips
         self.SetScrollRate(10, 10)
         self._base_font = wx.Font(14, wx.FONTFAMILY_SWISS, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, faceName="Inter")
         self.SetFont(self._base_font)
@@ -962,6 +1009,28 @@ class MainPanel(wx.ScrolledWindow):
         header.SetSizer(header_sizer)
         main_sizer.Add(header, 0, wx.EXPAND)
 
+        mode_panel = wx.Panel(self)
+        mode_panel.SetBackgroundColour(SURFACE_VAR)
+        mode_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        mode_label = wx.StaticText(mode_panel, label="Mode")
+        mode_label.SetForegroundColour(TEXT_PRIMARY)
+        self.mode_choice = wx.RadioBox(
+            mode_panel,
+            choices=["Easy", "Advanced"],
+            majorDimension=2,
+            style=wx.RA_SPECIFY_COLS,
+        )
+        self.mode_choice.SetSelection(0)
+        self.mode_choice.SetToolTip("Easy mode hides advanced knobs; Advanced exposes every planner control")
+        self.mode_choice.Bind(wx.EVT_RADIOBOX, self._on_mode_toggle)
+        self.mode_hint = wx.StaticText(mode_panel, label="Easy mode: start timers quickly with sensible defaults.")
+        self.mode_hint.SetForegroundColour(TEXT_SECONDARY)
+        mode_sizer.Add(mode_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        mode_sizer.Add(self.mode_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        mode_sizer.Add(self.mode_hint, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        mode_panel.SetSizer(mode_sizer)
+        main_sizer.Add(mode_panel, 0, wx.EXPAND)
+
         ribbon = self._build_ribbon()
         main_sizer.Add(ribbon, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
 
@@ -981,6 +1050,46 @@ class MainPanel(wx.ScrolledWindow):
 
         main_sizer.Add(dock_host, 1, wx.EXPAND)
         self.SetSizer(main_sizer)
+        self._apply_mode_settings()
+        wx.CallAfter(self._maybe_show_first_help)
+
+    def _on_mode_toggle(self, event: wx.CommandEvent) -> None:
+        self.advanced_mode = self.mode_choice.GetSelection() == 1
+        self._apply_mode_settings()
+
+    def _apply_mode_settings(self) -> None:
+        """Enable or simplify controls based on the selected mode."""
+        simple = not self.advanced_mode
+        self.mode_hint.SetLabel(
+            "Easy mode: minimal controls, just press Start." if simple else "Advanced mode: tune plans, splits, and analytics."
+        )
+        for ctrl in [
+            getattr(self, "plan_duration_days", None),
+            getattr(self, "plan_minutes_spin", None),
+            getattr(self, "plan_days_spin", None),
+            getattr(self, "plan_hours_spin", None),
+        ]:
+            if ctrl:
+                ctrl.Enable(not simple or ctrl is self.plan_hours_spin)
+        if simple and hasattr(self, "plan_days_spin"):
+            self.plan_days_spin.SetValue(1)
+        if simple and hasattr(self, "plan_minutes_spin"):
+            self.plan_minutes_spin.SetValue(0)
+        if simple and hasattr(self, "plan_duration_days"):
+            self.plan_duration_days.SetValue(0)
+        if simple and hasattr(self, "plan_hours_spin") and self.plan_hours_spin.GetValue() == 0:
+            self.plan_hours_spin.SetValue(1.0)
+        if hasattr(self, "per_day_label"):
+            self.per_day_label.SetForegroundColour(TEXT_ON_DARK if not simple else TEXT_SECONDARY)
+        self.Layout()
+
+    def _maybe_show_first_help(self) -> None:
+        if self.show_help_tips:
+            self._show_help(None)
+            self.show_help_tips = False
+            cfg = self.config_manager.config
+            cfg.show_help_tips = False
+            self.config_manager.save(cfg)
 
     def _setup_docking(self) -> None:
         assert self.mgr is not None
@@ -1618,11 +1727,14 @@ class MainPanel(wx.ScrolledWindow):
         wx.MessageBox(
             (
                 "Welcome to Study Tracker!\n\n"
-                "• Add or edit activities from the left list (right-click for quick actions).\n"
-                "• Select one, set a plan, and press Start. Pause/Stop anytime; you’ll be asked for objectives and completion.\n"
-                "• Today tab shows what you logged; History filters by range and activity.\n"
-                "• Statistics tab renders charts and exports Excel (close the file before exporting).\n"
-                "• Use Layout to snap panes or drag cards like a dashboard."
+                "Easy mode keeps things simple: pick a task, tap Start, and log objectives when you stop.\n"
+                "Advanced mode unlocks plan splits (days / hours / minutes), per-day targets, and extra analytics.\n\n"
+                "Workflow:\n"
+                "1) Add or edit activities from the left list (right-click for quick actions).\n"
+                "2) Select one, set a plan (days + hours + minutes), then Start. Pause/Stop anytime; you’ll be asked for objectives and completion.\n"
+                "3) Today tab shows what you logged; History filters by range and activity.\n"
+                "4) Statistics + Floating charts show KPIs; hover buttons for tips, export to Excel when ready.\n"
+                "5) Ribbon > Help lets you replay these steps anytime."
             ),
             "How to use Study Tracker",
         )
@@ -1710,6 +1822,9 @@ class MainPanel(wx.ScrolledWindow):
         self.progress = wx.Gauge(timer_card, range=100)
         self.progress.SetToolTip("Progress against the planned hours")
         timer_sizer.Add(target_row, 0, wx.EXPAND)
+        self.plan_summary = wx.StaticText(timer_card, label="Plan: 1.00h over 1 day (~1.00h/day)")
+        self.plan_summary.SetForegroundColour(TEXT_SECONDARY)
+        timer_sizer.Add(self.plan_summary, 0, wx.ALL | wx.ALIGN_LEFT, 6)
         for ctrl in (self.plan_duration_days, self.plan_hours_spin, self.plan_minutes_spin, self.plan_days_spin):
             ctrl.Bind(wx.EVT_SPINCTRL, self._on_plan_changed)
         self.plan_hours_spin.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_plan_changed)
@@ -1953,8 +2068,13 @@ class MainPanel(wx.ScrolledWindow):
     def on_activity_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
         self.selected_activity = event.GetData()
         activity = next((a for a in self.controller.list_activities() if a.id == self.selected_activity), None)
-        if activity and activity.default_target_hours:
-            self._set_plan_controls(activity.default_target_hours, 1)
+        if activity:
+            total, per_day, plan_days = self._current_plan_for(activity.id)
+            self._set_plan_controls(total, plan_days)
+            self.activity_list.SetToolTip(
+                f"{activity.name}\nTotal plan: {total:.2f}h over {plan_days} day(s) (~{per_day:.2f}h/day)\n"
+                f"Description: {activity.description or 'No description set.'}"
+            )
         self._load_objectives()
 
     def on_food_break(self, event: wx.CommandEvent) -> None:
@@ -1978,6 +2098,8 @@ class MainPanel(wx.ScrolledWindow):
             return
         frame = TaskFrame(self, self.controller, self, activity_id)
         self.task_windows[activity_id] = frame
+        total, per_day, plan_days = self._current_plan_for(activity_id)
+        frame.update_plan_summary(total, per_day, plan_days)
         frame.Show()
 
     def _load_objectives(self) -> None:
@@ -2000,11 +2122,12 @@ class MainPanel(wx.ScrolledWindow):
     def on_add_activity(self, event: wx.Event) -> None:
         dlg = ActivityDialog(self, "Add Activity")
         if dlg.ShowModal() == wx.ID_OK:
-            name, desc, target = dlg.get_values()
+            name, desc, target, plan_days = dlg.get_values()
             self._with_error_dialog(
                 "Creating activity",
                 lambda: self.controller.add_activity(name, description=desc, default_target_hours=target),
             )
+            self._set_plan_controls(target, plan_days)
             self.load_activities()
         dlg.Destroy()
 
@@ -2023,13 +2146,14 @@ class MainPanel(wx.ScrolledWindow):
             target=activity.default_target_hours,
         )
         if dlg.ShowModal() == wx.ID_OK:
-            name, desc, target = dlg.get_values()
+            name, desc, target, plan_days = dlg.get_values()
             self._with_error_dialog(
                 "Updating activity",
                 lambda: self.controller.update_activity(
                     activity_id, name=name, description=desc, default_target_hours=target
                 ),
             )
+            self._set_plan_controls(target, plan_days)
             self.load_activities()
         dlg.Destroy()
 
@@ -2105,7 +2229,26 @@ class MainPanel(wx.ScrolledWindow):
             self.target_input.SetValue(per_day)
         if hasattr(self, "per_day_label"):
             self.per_day_label.SetLabel(f"Per-day: {per_day:.2f}h")
+        if hasattr(self, "plan_summary"):
+            self.plan_summary.SetLabel(f"Plan: {total_hours:.2f}h over {plan_days} day(s) (~{per_day:.2f}h/day)")
+        if self.selected_activity is not None:
+            self._update_task_window_plan(self.selected_activity, total_hours, per_day, plan_days)
         return total_hours, per_day, plan_days
+
+    def _current_plan_for(self, activity_id: int) -> tuple[float, float, int]:
+        total_hours = self.plan_totals.get(activity_id)
+        plan_days = self.plan_days.get(activity_id, 1)
+        if total_hours is None:
+            activity = next((a for a in self.controller.list_activities() if a.id == activity_id), None)
+            total_hours = activity.default_target_hours if activity else self.plan_hours_spin.GetValue()
+        total_hours = total_hours or 0.0
+        plan_days = max(1, plan_days)
+        per_day = total_hours / plan_days if plan_days else total_hours
+        return total_hours, per_day, plan_days
+
+    def _update_task_window_plan(self, activity_id: int, total_hours: float, per_day: float, plan_days: int) -> None:
+        if activity_id in self.task_windows:
+            self.task_windows[activity_id].update_plan_summary(total_hours, per_day, plan_days)
 
     def _set_plan_controls(self, total_hours: float, plan_days: int) -> None:
         plan_days = max(1, int(plan_days or 1))
@@ -2264,6 +2407,10 @@ class TaskFrame(wx.Frame):
         heading.SetForegroundColour(ACCENT)
         sizer.Add(heading, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 8)
 
+        self.plan_label = wx.StaticText(self, label="Plan: --")
+        self.plan_label.SetForegroundColour(TEXT_SECONDARY)
+        sizer.Add(self.plan_label, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 4)
+
         self.timer_label = wx.StaticText(self, label="00:00:00", style=wx.ALIGN_CENTER_HORIZONTAL)
         timer_font = self.timer_label.GetFont()
         timer_font.PointSize += 6
@@ -2295,6 +2442,10 @@ class TaskFrame(wx.Frame):
         hint.SetForegroundColour(MUTED)
         sizer.Add(hint, 0, wx.ALL, 6)
         self.SetSizer(sizer)
+
+    def update_plan_summary(self, total_hours: float, per_day: float, plan_days: int) -> None:
+        self.plan_label.SetLabel(f"Plan: {total_hours:.2f}h over {plan_days} day(s) (~{per_day:.2f}h/day)")
+        self.Layout()
 
     def _update_display(self, elapsed_seconds: float) -> None:
         hours = int(elapsed_seconds) // 3600
