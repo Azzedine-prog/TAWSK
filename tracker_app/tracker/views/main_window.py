@@ -922,7 +922,9 @@ class MainPanel(wx.ScrolledWindow):
             LOGGER.warning("Ribbon color fallback due to conversion issue: %s", exc)
             art.SetColourScheme(wx.Colour(31, 41, 55), wx.Colour(74, 144, 226), wx.Colour(247, 249, 252))
         ribbon.SetArtProvider(art)
-        ribbon.SetFont(wx.Font(wx.FontInfo(11).FaceName(ribbon.GetFont().GetFaceName())))
+        ribbon_font = ribbon.GetFont()
+        ribbon_font.SetPointSize(11)
+        ribbon.SetFont(ribbon_font)
 
         def add_button(bar: RB.RibbonButtonBar, label: str, art: str, handler, help_str: str = "") -> None:
             btn_id = wx.NewId()
@@ -1035,7 +1037,10 @@ class MainPanel(wx.ScrolledWindow):
         title_font.MakeBold()
         title.SetFont(title_font)
         self.ongoing_name = wx.StaticText(panel, label="None")
-        self.ongoing_name.SetFont(wx.FontInfo(14).Bold())
+        ongoing_font = self.ongoing_name.GetFont()
+        ongoing_font.SetPointSize(14)
+        ongoing_font.MakeBold()
+        self.ongoing_name.SetFont(ongoing_font)
         self.ongoing_meta = wx.StaticText(panel, label="--")
         self.ongoing_time = wx.StaticText(panel, label="Today: 0.00h • Total: 0.00h")
         self.ongoing_state = wx.StaticText(panel, label="State: Idle")
