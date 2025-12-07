@@ -1496,6 +1496,19 @@ class MainPanel(wx.ScrolledWindow):
             self.mgr.Update()
         event.Skip()
 
+    def _selected_activity_id(self) -> int:
+        """Return the selected activity id or prompt the user."""
+
+        if self.selected_activity is not None:
+            return self.selected_activity
+        wx.MessageBox(
+            "Please select an activity first.",
+            "No activity selected",
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+        raise RuntimeError("No activity selected")
+
     def _export_range(self, start: date, end: date, title: str) -> None:
         try:
             path = self.controller.export_to_excel(start, end)
@@ -2846,6 +2859,10 @@ class TaskFrame(wx.Frame):
         self.Layout()
 
     def _update_display(self, elapsed_seconds: float) -> None:
+        if getattr(self, "_closed", False) or not getattr(self, "timer_label", None):
+            return
+        if not self.timer_label.IsOk():
+            return
         hours = int(elapsed_seconds) // 3600
         minutes = (int(elapsed_seconds) % 3600) // 60
         seconds = int(elapsed_seconds) % 60
@@ -2881,6 +2898,7 @@ class TaskFrame(wx.Frame):
         self.main_panel._complete_session(self.activity_id, "Stop session", allow_reason=True)
 
     def on_close(self, event: wx.CloseEvent) -> None:  # type: ignore[override]
+        self._closed = True
         if self.activity_id in self.main_panel.task_windows:
             del self.main_panel.task_windows[self.activity_id]
         event.Skip()

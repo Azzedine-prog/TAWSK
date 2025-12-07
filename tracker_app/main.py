@@ -40,10 +40,13 @@ def _load_api_keys() -> None:
 
     config_dir = Path.home() / ".study_tracker"
     candidate = config_dir / "api_keys.toml"
-    fallback = PROJECT_ROOT / "tracker_app" / "config" / "api_keys.example.toml"
-    path = candidate if candidate.exists() else fallback
-    if not path.exists():
+    if not candidate.exists():
+        # Do not parse the bundled example file because it intentionally contains
+        # placeholders that are not valid TOML. Users can copy the example to
+        # ~/.study_tracker/api_keys.toml and fill in their own secrets.
+        logging.info("No api_keys.toml found; skipping optional Gemini/Firebase config")
         return
+    path = candidate
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except Exception:
