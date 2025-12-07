@@ -2343,6 +2343,10 @@ class MainPanel(wx.ScrolledWindow):
         self.timer_label.SetFont(tfont)
         self.timer_label.SetForegroundColour(TEXT_ON_DARK)
         board_sizer.Add(self.timer_label, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 4)
+
+        self.today_hours_label = wx.StaticText(board_card, label="Today: 0.00 h")
+        self.today_hours_label.SetForegroundColour(TEXT_SECONDARY)
+        board_sizer.Add(self.today_hours_label, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 2)
         self.progress = wx.Gauge(board_card, range=100)
         board_sizer.Add(self.progress, 0, wx.EXPAND | wx.ALL, 6)
 
@@ -2765,25 +2769,38 @@ class MainPanel(wx.ScrolledWindow):
     def _update_timer_display(self, activity_id: int, elapsed_seconds: float) -> None:
         if not getattr(self, "_session_panel_alive", True):
             return
-        if not getattr(self, "timer_label", None) or not self.timer_label.IsOk():
+        if not getattr(self, "timer_label", None):
             return
         hours = int(elapsed_seconds) // 3600
         minutes = (int(elapsed_seconds) % 3600) // 60
         seconds = int(elapsed_seconds) % 60
-        self.timer_label.SetLabel(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        try:
+            self.timer_label.SetLabel(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        except RuntimeError:
+            # The label was destroyed after a floating window closed; stop updating.
+            self._session_panel_alive = False
+            return
         target = self.active_targets.get(activity_id, self.target_input.GetValue())
         self._update_progress(elapsed_seconds / 3600.0, target)
 
     def _update_progress(self, elapsed_hours: float, target_hours: float) -> None:
         if not getattr(self, "_session_panel_alive", True):
             return
-        if not getattr(self, "progress", None) or not self.progress.IsOk():
+        if not getattr(self, "progress", None):
             return
         if target_hours > 0:
             percent = min(100, int((elapsed_hours / target_hours) * 100))
-            self.progress.SetValue(percent)
+            try:
+                self.progress.SetValue(percent)
+            except RuntimeError:
+                self._session_panel_alive = False
+                return
         else:
-            self.progress.SetValue(0)
+            try:
+                self.progress.SetValue(0)
+            except RuntimeError:
+                self._session_panel_alive = False
+                return
 
     def _update_focus_display(
         self, activity_id: int, state: str, phase: str, work_seconds: float, remaining_seconds: float
@@ -2791,7 +2808,7 @@ class MainPanel(wx.ScrolledWindow):
         """Update the timer label for the Pomodoro/focus session tick."""
         if not getattr(self, "_session_panel_alive", True):
             return
-        if not getattr(self, "timer_label", None) or not self.timer_label.IsOk():
+        if not getattr(self, "timer_label", None):
             return
         self.current_focus_activity = activity_id
         hours = int(work_seconds) // 3600
@@ -2800,13 +2817,37 @@ class MainPanel(wx.ScrolledWindow):
         label = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         if phase == "break":
             label += " (break)"
-        self.timer_label.SetLabel(label)
+        try:
+            self.timer_label.SetLabel(label)
+        except RuntimeError:
+            self._session_panel_alive = False
+            return
         target = self.active_targets.get(activity_id, self.target_input.GetValue())
         self._update_progress(work_seconds / 3600.0, target)
-        if remaining_seconds is not None:
-            self.plan_summary.SetLabel(
-                f"Phase: {phase.title()} • Remaining: {remaining_seconds/60:.1f} min • State: {state.title()}"
-            )
+        if getattr(self, "plan_summary", None) and remaining_seconds is not None:
+            try:
+                self.plan_summary.SetLabel(
+                    f"Phase: {phase.title()} • Remaining: {remaining_seconds/60:.1f} min • State: {state.title()}"
+                )
+            except RuntimeError:
+                self._session_panel_alive = False
+
+    def _sync_plan_from_activity(self, activity_id: int) -> None:
+        """Align plan controls with the selected activity or today's entry."""
+        entry = self.controller.storage.get_daily_entry(date.today(), activity_id)
+        if entry and getattr(entry, "plan_total_hours", None) is not None:
+            total = entry.plan_total_hours or entry.target_hours or 0.0
+            plan_days = getattr(entry, "plan_days", 1) or 1
+        else:
+            activity = next((a for a in self.controller.list_activities() if a.id == activity_id), None)
+            total = activity.default_target_hours if activity else 0.0
+            plan_days = getattr(activity, "plan_days", 1) if activity else 1
+        self._set_plan_controls(total, plan_days)
+        per_day = total / max(1, plan_days)
+        self.active_targets[activity_id] = per_day
+        self.plan_totals[activity_id] = total
+        self.plan_days[activity_id] = plan_days
+        self._update_task_window_plan(activity_id, total, per_day, plan_days)
 
     def _complete_focus_session(self, activity_id: int, work_seconds: float) -> None:
         """Capture outcomes for a finished Pomodoro cycle and persist to history."""
