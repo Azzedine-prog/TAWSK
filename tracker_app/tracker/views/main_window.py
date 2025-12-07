@@ -2854,6 +2854,10 @@ class TaskFrame(wx.Frame):
         sizer.Add(hint, 0, wx.ALL, 6)
         self.SetSizer(sizer)
 
+        # Mark closed when the window is destroyed so async timer callbacks short-circuit
+        # before touching any wx objects that might already be freed.
+        self.Bind(wx.EVT_WINDOW_DESTROY, self.on_destroy)
+
     def update_plan_summary(self, total_hours: float, per_day: float, plan_days: int) -> None:
         self.plan_label.SetLabel(f"Plan: {total_hours:.2f}h over {plan_days} day(s) (~{per_day:.2f}h/day)")
         self.Layout()
@@ -2901,6 +2905,10 @@ class TaskFrame(wx.Frame):
         self._closed = True
         if self.activity_id in self.main_panel.task_windows:
             del self.main_panel.task_windows[self.activity_id]
+        event.Skip()
+
+    def on_destroy(self, event: wx.WindowDestroyEvent) -> None:  # type: ignore[override]
+        self._closed = True
         event.Skip()
 
 
