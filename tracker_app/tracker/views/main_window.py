@@ -528,6 +528,8 @@ class StatsChartsPanel(wx.ScrolledWindow):
                 f"Consistency: {kpis.get('consistency_score', 'N/A')}",
             ]
             self.advice.SetLabel("\n".join(advice_lines))
+            self.Layout()
+            self.FitInside()
         except Exception as exc:  # pragma: no cover - UI path
             LOGGER.exception("Failed to render floating charts")
             self.advice.SetLabel(f"Charts unavailable: {exc}")
@@ -623,17 +625,22 @@ class StatsChartsPanel(wx.ScrolledWindow):
         header.SetForegroundColour(TEXT_ON_DARK)
         main.Add(header, 0, wx.ALL, 6)
 
-        self.chart_hours = wx.StaticBitmap(self)
-        self.chart_planned = wx.StaticBitmap(self)
-        self.chart_focus = wx.StaticBitmap(self)
-        self.chart_category = wx.StaticBitmap(self)
-        self.chart_completion = wx.StaticBitmap(self)
-        self.chart_on_time = wx.StaticBitmap(self)
-        self.chart_productivity = wx.StaticBitmap(self)
-        self.chart_backlog = wx.StaticBitmap(self)
-        self.chart_duration = wx.StaticBitmap(self)
-        self.chart_heatmap = wx.StaticBitmap(self)
-        self.chart_funnel = wx.StaticBitmap(self)
+        def _chart_bitmap() -> wx.StaticBitmap:
+            bmp = wx.StaticBitmap(self)
+            bmp.SetMinSize((420, 260))
+            return bmp
+
+        self.chart_hours = _chart_bitmap()
+        self.chart_planned = _chart_bitmap()
+        self.chart_focus = _chart_bitmap()
+        self.chart_category = _chart_bitmap()
+        self.chart_completion = _chart_bitmap()
+        self.chart_on_time = _chart_bitmap()
+        self.chart_productivity = _chart_bitmap()
+        self.chart_backlog = _chart_bitmap()
+        self.chart_duration = _chart_bitmap()
+        self.chart_heatmap = _chart_bitmap()
+        self.chart_funnel = _chart_bitmap()
 
         for label_text, bitmap in (
             ("Hours by activity", self.chart_hours),
@@ -832,6 +839,8 @@ class MainPanel(wx.ScrolledWindow):
         self.plan_totals: Dict[int, float] = {}
         self.plan_days: Dict[int, int] = {}
         self.mgr: Optional[wx.aui.AuiManager] = None
+        self.tab_book: Optional[wx.aui.AuiNotebook] = None
+        self.tab_lookup: Dict[str, wx.Window] = {}
         self.current_user_id = config_manager.config.user_id or "default-user"
         from tracker_app.core.auth import FirebaseAuthManager
 
@@ -901,6 +910,12 @@ class MainPanel(wx.ScrolledWindow):
         add_button(home_bar, "Weekly overview", wx.ART_HELP_SETTINGS, self._show_weekly_overview, "Last 7 days")
         add_button(home_bar, "Quick search", wx.ART_FIND, self._quick_search, "Find tasks")
         add_button(home_bar, "Sync", wx.ART_EXECUTABLE_FILE, self._sync_now, "Backup database")
+
+        tabs_panel = RB.RibbonPanel(home_page, wx.ID_ANY, "Tabs")
+        tabs_bar = RB.RibbonButtonBar(tabs_panel)
+        add_button(tabs_bar, "Timer tab", wx.ART_REPORT_VIEW, lambda evt: self._move_pane_to_tab("session", "Timer"), "Open timer as tab")
+        add_button(tabs_bar, "Insights tab", wx.ART_LIST_VIEW, lambda evt: self._move_pane_to_tab("insights", "Insights"), "Open insights as tab")
+        add_button(tabs_bar, "Charts tab", wx.ART_FIND, lambda evt: self._move_pane_to_tab("stats_charts", "Charts"), "Open charts as tab")
 
         # Tasks page
         task_page = RB.RibbonPage(ribbon, wx.ID_ANY, "Tasks")
@@ -1103,6 +1118,15 @@ class MainPanel(wx.ScrolledWindow):
         dock_host.SetBackgroundColour(BACKGROUND)
         dock_host.SetMinSize((880, 640))
         self.mgr = wx.aui.AuiManager(dock_host)
+        self.tab_book = wx.aui.AuiNotebook(
+            dock_host,
+            style=
+            wx.aui.AUI_NB_TAB_MOVE
+            | wx.aui.AUI_NB_SCROLL_BUTTONS
+            | wx.aui.AUI_NB_TAB_SPLIT
+            | wx.aui.AUI_NB_CLOSE_ON_ACTIVE_TAB,
+        )
+        self.tab_book.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, self._on_tab_close)
 
         self.activities_panel = self._build_activities_panel(dock_host)
         self.session_panel = self._build_session_panel(dock_host)
@@ -1159,6 +1183,19 @@ class MainPanel(wx.ScrolledWindow):
     def _setup_docking(self) -> None:
         assert self.mgr is not None
         self.stats_charts_panel.attach_manager(self.mgr)
+        if self.tab_book and not self.mgr.GetPane(self.tab_book).IsOk():
+            self.mgr.AddPane(
+                self.tab_book,
+                wx.aui.AuiPaneInfo()
+                .Name("tabs")
+                .Caption("Tabbed workspace")
+                .Bottom()
+                .BestSize(600, 320)
+                .CloseButton(True)
+                .DestroyOnClose(False)
+                .Floatable(True)
+                .Show(False),
+            )
         self.mgr.AddPane(
             self.activities_panel,
             wx.aui.AuiPaneInfo()
@@ -1240,15 +1277,15 @@ class MainPanel(wx.ScrolledWindow):
     def _capture_layouts(self) -> None:
         """Create perspectives with a minimal floating default of three panes."""
         assert self.mgr is not None
-        panes = ["activities", "session", "insights", "objectives", "stats_charts", "guide"]
+        panes = ["activities", "session", "insights", "objectives", "stats_charts", "guide", "tabs"]
 
-        # Default: three visible panes side by side (floating-capable)
+        # Default: three visible panes side by side (floating-capable) without auto-opening the focus timer
         for name in panes:
             pane = self.mgr.GetPane(name)
             if pane.IsOk():
-                pane.Show(name in {"activities", "session", "insights"})
+                pane.Show(name in {"activities", "insights", "objectives"})
         self.mgr.GetPane("activities").Left().BestSize(320, 520)
-        self.mgr.GetPane("session").CenterPane().BestSize(520, 340)
+        self.mgr.GetPane("session").CenterPane().BestSize(520, 340).Show(False)
         self.mgr.GetPane("insights").Right().BestSize(520, 440)
         self.mgr.GetPane("objectives").Bottom().BestSize(480, 220)
         self.mgr.GetPane("stats_charts").Float().BestSize(640, 460)
@@ -1356,6 +1393,16 @@ class MainPanel(wx.ScrolledWindow):
             return
         pane = self.mgr.GetPane(name)
         if not pane.IsOk():
+            # If the pane was moved into the tab host, select it there instead of failing.
+            if self.tab_book and name in self.tab_lookup:
+                window = self.tab_lookup[name]
+                idx = self.tab_book.GetPageIndex(window)
+                if idx != wx.NOT_FOUND:
+                    self.tab_book.SetSelection(idx)
+                pane = self.mgr.GetPane("tabs")
+                if pane.IsOk():
+                    pane.Show(True)
+                    self.mgr.Update()
             return
         pane.Show(True)
         if dock:
@@ -1363,6 +1410,62 @@ class MainPanel(wx.ScrolledWindow):
         if floatable and pane.IsFloatable():
             pane.Float()
         self.mgr.Update()
+
+    def _default_pane_info(self, name: str, window: wx.Window) -> wx.aui.AuiPaneInfo:
+        info = (
+            wx.aui.AuiPaneInfo()
+            .Name(name)
+            .Caption(window.GetName() or name.title())
+            .Floatable(True)
+            .CloseButton(True)
+            .Show(True)
+        )
+        if name == "activities":
+            return info.Left().BestSize(320, 520)
+        if name == "session":
+            return info.CenterPane().BestSize(520, 340)
+        if name == "insights":
+            return info.Right().BestSize(520, 440)
+        if name == "objectives":
+            return info.Bottom().BestSize(480, 220)
+        if name == "stats_charts":
+            return info.Right().BestSize(640, 460)
+        if name == "guide":
+            return info.Bottom().BestSize(480, 180)
+        return info.BestSize(520, 340)
+
+    def _move_pane_to_tab(self, pane_name: str, label: str) -> None:
+        if not (self.mgr and self.tab_book):
+            return
+        pane = self.mgr.GetPane(pane_name)
+        if not pane.IsOk() or not pane.window:
+            return
+        window = pane.window
+        self.mgr.DetachPane(window)
+        window.Reparent(self.tab_book)
+        self.tab_book.AddPage(window, label, select=True)
+        self.tab_lookup[pane_name] = window
+        tabs_pane = self.mgr.GetPane("tabs")
+        if tabs_pane.IsOk():
+            tabs_pane.Show(True)
+        self.mgr.Update()
+
+    def _on_tab_close(self, event: wx.aui.AuiNotebookEvent) -> None:
+        if not (self.mgr and self.tab_book):
+            event.Skip()
+            return
+        selection = event.GetSelection()
+        page = self.tab_book.GetPage(selection)
+        pane_name = next((name for name, wnd in self.tab_lookup.items() if wnd is page), None)
+        self.tab_book.RemovePage(selection)
+        if pane_name:
+            self.tab_lookup.pop(pane_name, None)
+        if page:
+            page.Reparent(self.mgr.GetManagedWindow())
+            info = self._default_pane_info(pane_name or page.GetName(), page)
+            self.mgr.AddPane(page, info)
+            self.mgr.Update()
+        event.Veto()  # prevent double close handling
 
     def _ribbon_export(self, event: wx.CommandEvent) -> None:
         start = date.today() - timedelta(days=29)
@@ -1955,6 +2058,7 @@ class MainPanel(wx.ScrolledWindow):
         self.activity_list.InsertColumn(1, "Today")
         self.activity_list.InsertColumn(2, "Plan")
         self.activity_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_activity_selected)
+        self.activity_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_activity_activated)
         self.activity_list.Bind(wx.EVT_CONTEXT_MENU, self.on_activity_context)
         self.activity_list.SetToolTip("Select or right-click to manage activities and timers")
         left_sizer.Add(self.activity_list, 1, wx.EXPAND | wx.ALL, 4)
@@ -2264,6 +2368,16 @@ class MainPanel(wx.ScrolledWindow):
                 f"Description: {activity.description or 'No description set.'}"
             )
         self._load_objectives()
+
+    def on_activity_activated(self, event: wx.ListEvent) -> None:
+        """Open the task timer window on double-click and surface the session pane."""
+
+        self.on_activity_selected(event)
+        activity_id = self._require_selection()
+        if activity_id is None:
+            return
+        self._show_pane("session", dock=True)
+        self._ensure_task_window(activity_id)
 
     def on_food_break(self, event: wx.CommandEvent) -> None:
         if self.selected_activity is None:
