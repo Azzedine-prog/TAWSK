@@ -321,6 +321,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
         self.controller = controller
         self.manager: Optional[wx.aui.AuiManager] = None
         self.SetScrollRate(10, 10)
+        self.SetMinSize((780, 1100))
         self._build_ui()
 
     def attach_manager(self, manager: wx.aui.AuiManager) -> None:
@@ -331,6 +332,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
             return
         pane = self.manager.GetPane(self)
         if pane.IsOk():
+            pane.MinSize((780, 900))
             pane.Show(True)
             if not pane.IsFloating():
                 pane.Float()
@@ -355,8 +357,12 @@ class StatsChartsPanel(wx.ScrolledWindow):
 
     def _to_bitmap(self, fig) -> wx.Bitmap:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            fig.savefig(tmp.name, bbox_inches="tight")
-            bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
+            try:
+                fig.savefig(tmp.name, bbox_inches="tight")
+                bitmap = wx.Bitmap(tmp.name, wx.BITMAP_TYPE_PNG)
+            except ValueError:
+                plt.close(fig)
+                return wx.NullBitmap
         plt.close(fig)
         return bitmap
 
@@ -530,6 +536,7 @@ class StatsChartsPanel(wx.ScrolledWindow):
             self.advice.SetLabel("\n".join(advice_lines))
             self.Layout()
             self.FitInside()
+            self.SendSizeEvent()
         except Exception as exc:  # pragma: no cover - UI path
             LOGGER.exception("Failed to render floating charts")
             self.advice.SetLabel(f"Charts unavailable: {exc}")
@@ -835,6 +842,7 @@ class MainPanel(wx.ScrolledWindow):
         self.ai = AIAssistantService(controller)
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
         self.saved_layout: str = config_manager.config.last_layout
+        self.show_focus_on_start: bool = config_manager.config.show_focus_on_start
         self.active_targets: Dict[int, float] = {}
         self.plan_totals: Dict[int, float] = {}
         self.plan_days: Dict[int, int] = {}
@@ -842,6 +850,7 @@ class MainPanel(wx.ScrolledWindow):
         self.tab_book: Optional[wx.aui.AuiNotebook] = None
         self.tab_lookup: Dict[str, wx.Window] = {}
         self.current_user_id = config_manager.config.user_id or "default-user"
+        self.current_focus_activity: Optional[int] = None
         from tracker_app.core.auth import FirebaseAuthManager
 
         self.auth_manager = FirebaseAuthManager(CONFIG_DIR)
@@ -1335,6 +1344,16 @@ class MainPanel(wx.ScrolledWindow):
             self.mgr.LoadPerspective(default_layout)
         self.mgr.Update()
         self.saved_layout = self.mgr.SavePerspective()
+        self._enforce_focus_visibility_pref()
+
+    def _enforce_focus_visibility_pref(self) -> None:
+        """Hide the focus session pane on launch unless explicitly requested."""
+        if not self.mgr:
+            return
+        pane = self.mgr.GetPane("session")
+        if pane.IsOk() and not self.show_focus_on_start:
+            pane.Show(False)
+            self.mgr.Update()
 
     def get_current_layout(self) -> str:
         if self.mgr:
@@ -1612,15 +1631,30 @@ class MainPanel(wx.ScrolledWindow):
         if activity_id is None:
             wx.MessageBox("Select a task first.", "Pomodoro")
             return
-        target_hours = 25 / 60.0
-        def tick_cb(elapsed: float) -> None:
-            wx.CallAfter(self._update_timer_display, activity_id, elapsed)
+        self.current_focus_activity = activity_id
 
-        def on_complete(elapsed: float) -> None:
-            wx.CallAfter(self._handle_timer_complete, activity_id, elapsed)
+        def tick_cb(state: str, phase: str, work_seconds: float, remaining: float) -> None:
+            wx.CallAfter(self._update_focus_display, activity_id, state, phase, work_seconds, remaining)
 
-        self.controller.start_timer(activity_id, tick_cb, target_hours=target_hours, on_complete=on_complete)
-        wx.MessageBox("Pomodoro started (25 min). A reminder will appear on completion.", "Pomodoro")
+        def phase_cb(phase: str) -> None:
+            if phase == "break":
+                wx.CallAfter(lambda: wx.MessageBox("Break time started. Step away for a moment.", "Pomodoro"))
+            elif phase == "finished":
+                wx.CallAfter(lambda: wx.MessageBox("Pomodoro cycle finished. Let's log it!", "Pomodoro"))
+
+        def complete_cb(work_seconds: float) -> None:
+            wx.CallAfter(self._complete_focus_session, activity_id, work_seconds)
+
+        self.controller.start_focus_session(
+            activity_id,
+            work_minutes=25,
+            break_minutes=5,
+            tick_cb=tick_cb,
+            phase_cb=phase_cb,
+            on_complete=complete_cb,
+        )
+        self._show_pane("session", dock=True)
+        wx.MessageBox("Pomodoro started (25 min focus + 5 min break).", "Pomodoro")
 
     def _generate_weekly_report(self, event: wx.CommandEvent) -> None:
         start = date.today() - timedelta(days=6)
@@ -2491,17 +2525,28 @@ class MainPanel(wx.ScrolledWindow):
     def on_pause(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
-        self._with_error_dialog("Pausing timer", lambda: self.controller.pause_timer(self.selected_activity))
+        session = self.controller.focus_sessions.sessions.get(self.selected_activity)
+        if session and session.state == "running":
+            self.controller.pause_focus_session(self.selected_activity)
+        else:
+            self._with_error_dialog("Pausing timer", lambda: self.controller.pause_timer(self.selected_activity))
 
     def on_stop(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
-        self._complete_session(self.selected_activity, "Stop session", allow_reason=True)
+        session = self.controller.focus_sessions.sessions.get(self.selected_activity)
+        if session and session.state in {"running", "paused", "finished"}:
+            self._complete_focus_session(self.selected_activity, session.work_elapsed_seconds)
+        else:
+            self._complete_session(self.selected_activity, "Stop session", allow_reason=True)
 
     def on_reset(self, event: wx.Event) -> None:
         if self.selected_activity is None:
             return
-        self._with_error_dialog("Resetting timer", lambda: self.controller.reset_timer(self.selected_activity))
+        if self.selected_activity in self.controller.focus_sessions.sessions:
+            self.controller.focus_sessions.reset(self.selected_activity)
+        else:
+            self._with_error_dialog("Resetting timer", lambda: self.controller.reset_timer(self.selected_activity))
         self.timer_label.SetLabel("00:00:00")
         self.progress.SetValue(0)
 
@@ -2519,6 +2564,57 @@ class MainPanel(wx.ScrolledWindow):
             self.progress.SetValue(percent)
         else:
             self.progress.SetValue(0)
+
+    def _update_focus_display(
+        self, activity_id: int, state: str, phase: str, work_seconds: float, remaining_seconds: float
+    ) -> None:
+        """Update the timer label for the Pomodoro/focus session tick."""
+        self.current_focus_activity = activity_id
+        hours = int(work_seconds) // 3600
+        minutes = (int(work_seconds) % 3600) // 60
+        seconds = int(work_seconds) % 60
+        label = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        if phase == "break":
+            label += " (break)"
+        self.timer_label.SetLabel(label)
+        target = self.active_targets.get(activity_id, self.target_input.GetValue())
+        self._update_progress(work_seconds / 3600.0, target)
+        if remaining_seconds is not None:
+            self.plan_summary.SetLabel(
+                f"Phase: {phase.title()} • Remaining: {remaining_seconds/60:.1f} min • State: {state.title()}"
+            )
+
+    def _complete_focus_session(self, activity_id: int, work_seconds: float) -> None:
+        """Capture outcomes for a finished Pomodoro cycle and persist to history."""
+        elapsed_hours = work_seconds / 3600.0
+        target_hours = self.active_targets.get(activity_id, self.target_input.GetValue())
+        plan_total = self.plan_totals.get(activity_id, target_hours * self.plan_days.get(activity_id, 1))
+        plan_days = self.plan_days.get(activity_id, 1)
+        dialog = OutcomeDialog(
+            self,
+            "Pomodoro finished",
+            self.objectives.GetValue(),
+            elapsed_hours,
+            target_hours,
+            early_stop=target_hours > 0 and elapsed_hours < target_hours,
+        )
+        if dialog.ShowModal() != wx.ID_OK:
+            return
+        objectives, completion_percent, stop_reason, comments = dialog.get_values()
+        self._with_error_dialog(
+            "Saving focus session",
+            lambda: self.controller.stop_focus_session(
+                activity_id,
+                objectives,
+                target_hours,
+                completion_percent,
+                comments=comments,
+                stop_reason=stop_reason,
+                plan_total_hours=plan_total,
+                plan_days=plan_days,
+            ),
+        )
+        self.refresh_today()
 
     def _compute_plan_hours(self) -> tuple[float, float, int]:
         duration_days = max(0, self.plan_duration_days.GetValue()) if hasattr(self, "plan_duration_days") else 0

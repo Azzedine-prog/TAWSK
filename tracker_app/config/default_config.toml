@@ -7,3 +7,4 @@ last_layout = ""
 show_help_tips = true
 user_id = "default-user"
 firebase_credentials = ""
+show_focus_on_start = false

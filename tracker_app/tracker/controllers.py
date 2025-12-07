@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 from . import __version__
 from .models import Activity, DailyEntry
 from .storage import Storage
-from .timers import TimerManager
+from .timers import FocusSessionManager, TimerManager
 from src.ai_integration import productivity_adapter
 if TYPE_CHECKING:
     from reports.excel_export import ExcelExporter
@@ -35,6 +35,7 @@ class AppConfig:
     show_help_tips: bool = True
     user_id: str = "default-user"
     firebase_credentials: str = ""
+    show_focus_on_start: bool = False
 
     @classmethod
     def from_toml(cls, data: dict) -> "AppConfig":
@@ -57,6 +58,7 @@ class AppConfig:
             show_help_tips=bool(data.get("show_help_tips", True)),
             user_id=data.get("user_id", "default-user"),
             firebase_credentials=data.get("firebase_credentials", ""),
+            show_focus_on_start=bool(data.get("show_focus_on_start", False)),
         )
 
     def to_toml(self) -> str:
@@ -75,6 +77,7 @@ class AppConfig:
             f"show_help_tips = {str(bool(self.show_help_tips)).lower()}",
             f"user_id = \"{self.user_id}\"",
             f"firebase_credentials = \"{self.firebase_credentials}\"",
+            f"show_focus_on_start = {str(bool(self.show_focus_on_start)).lower()}",
         ]
         return "\n".join(lines) + "\n"
 
@@ -106,6 +109,7 @@ class AppController:
     def __init__(self, storage: Storage, timers: TimerManager, exporter: ExcelExporter, config_manager: ConfigManager) -> None:
         self.storage = storage
         self.timers = timers
+        self.focus_sessions = FocusSessionManager()
         self.exporter = exporter
         self.config_manager = config_manager
         self.today = date.today()
@@ -199,6 +203,58 @@ class AppController:
             plan_days=plan_days,
         )
         return elapsed
+
+    # Focus / Pomodoro operations
+    def start_focus_session(
+        self,
+        activity_id: int,
+        work_minutes: int,
+        break_minutes: int,
+        tick_cb,
+        phase_cb=None,
+        on_complete=None,
+    ) -> None:
+        self.focus_sessions.start(
+            activity_id,
+            work_minutes=work_minutes,
+            break_minutes=break_minutes,
+            on_tick=tick_cb,
+            on_phase=phase_cb,
+            on_complete=on_complete,
+        )
+
+    def pause_focus_session(self, activity_id: int) -> None:
+        self.focus_sessions.pause(activity_id)
+
+    def resume_focus_session(self, activity_id: int) -> None:
+        self.focus_sessions.resume(activity_id)
+
+    def stop_focus_session(
+        self,
+        activity_id: int,
+        objectives: str,
+        target_hours: float,
+        completion_percent: float,
+        comments: str = "",
+        stop_reason: str = "",
+        plan_total_hours: float = 0.0,
+        plan_days: int = 1,
+    ) -> float:
+        session = self.focus_sessions.stop(activity_id)
+        elapsed_hours = session.work_elapsed_seconds / 3600.0  # use tracked work time only
+        self.storage.upsert_daily_entry(
+            self.today,
+            activity_id,
+            duration_hours_delta=elapsed_hours,
+            objectives_text=objectives,
+            target_hours=target_hours,
+            completion_percent=completion_percent,
+            stop_reason=stop_reason,
+            comments=comments,
+            plan_total_hours=plan_total_hours,
+            plan_days=plan_days,
+        )
+        return elapsed_hours
 
     def add_manual_time(
         self,
