@@ -164,6 +164,16 @@ class Storage:
             cur.execute("DELETE FROM daily_entries WHERE activity_id = ?", (activity_id,))
             LOGGER.info("Deleted activity %s", activity_id)
 
+    def delete_daily_entry(self, entry_date: date, activity_id: int) -> None:
+        """Remove a specific daily entry row."""
+        with self._get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM daily_entries WHERE date = ? AND activity_id = ?",
+                (entry_date.isoformat(), activity_id),
+            )
+            LOGGER.info("Deleted entry for %s %s", entry_date, activity_id)
+
     def get_daily_entry(self, entry_date: date, activity_id: int) -> Optional[DailyEntry]:
         with self._get_conn() as conn:
             cur = conn.cursor()

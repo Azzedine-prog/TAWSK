@@ -31,6 +31,7 @@ SECONDARY = "#6AAAF0"  # Hover/highlight
 ACCENT = "#63C297"  # Productivity green
 BACKGROUND = "#F6F7FB"
 SURFACE = "#FFFFFF"
+SURFACE_VAR = "#F0F1F5"
 CARD = "#FFFFFF"
 TEXT_ON_DARK = "#1E1F22"
 MUTED = "#8A8C93"
@@ -1503,8 +1504,14 @@ class MainPanel(wx.ScrolledWindow):
         toolbar = wx.BoxSizer(wx.HORIZONTAL)
         export_btn = wx.Button(panel, label="Export ICS")
         import_btn = wx.Button(panel, label="Import ICS")
+        add_btn = wx.Button(panel, label="Add event")
+        edit_btn = wx.Button(panel, label="Edit event")
+        delete_btn = wx.Button(panel, label="Delete event")
         toolbar.Add(export_btn, 0, wx.ALL, 4)
         toolbar.Add(import_btn, 0, wx.ALL, 4)
+        toolbar.Add(add_btn, 0, wx.ALL, 4)
+        toolbar.Add(edit_btn, 0, wx.ALL, 4)
+        toolbar.Add(delete_btn, 0, wx.ALL, 4)
         sizer.Add(toolbar, 0, wx.ALL, 4)
 
         list_box = wx.ListBox(panel)
@@ -1514,9 +1521,38 @@ class MainPanel(wx.ScrolledWindow):
             entries = self.controller.storage.get_entries_between(day, day)
             list_box.Clear()
             for row in entries:
-                comments = row[7] if len(row) > 7 else ""
-                plan_total = row[8] if len(row) > 8 else 0.0
-                list_box.Append(f"{row[1]}: {row[2]:.2f}h planned {plan_total:.2f}h {comments}")
+                (
+                    entry_date,
+                    activity_name,
+                    duration,
+                    objectives,
+                    target,
+                    completion,
+                    stop_reason,
+                    comments,
+                    plan_total,
+                    plan_days,
+                    *extra,
+                ) = (*row,)
+                per_day = (plan_total / plan_days) if plan_days else duration
+                idx = list_box.Append(
+                    f"{activity_name}: {duration:.2f}h | plan {plan_total:.2f}h over {plan_days}d (~{per_day:.2f}h/d) {comments}"
+                )
+                list_box.SetClientData(
+                    idx,
+                    (
+                        date.fromisoformat(str(entry_date)),
+                        activity_name,
+                        duration,
+                        objectives,
+                        target,
+                        completion,
+                        stop_reason,
+                        comments,
+                        plan_total,
+                        plan_days,
+                    ),
+                )
 
         def on_day_changed(_evt):
             chosen = cal.GetDate().FormatISODate()
@@ -1576,9 +1612,104 @@ class MainPanel(wx.ScrolledWindow):
             wx.MessageBox("Calendar imported", "Calendar import")
             on_day_changed(None)
 
+        def _prompt_entry(default_activity: str = "", default_hours: float = 1.0, default_days: int = 1, default_comments: str = ""):
+            name = wx.GetTextFromUser("Activity name", "Calendar entry", default_activity)
+            if not name:
+                return None
+            try:
+                hours = float(wx.GetTextFromUser("Total planned hours", "Calendar entry", str(default_hours)))
+            except ValueError:
+                wx.MessageBox("Hours must be numeric", "Calendar entry")
+                return None
+            try:
+                days = int(wx.GetTextFromUser("Number of days", "Calendar entry", str(max(1, default_days))))
+            except ValueError:
+                wx.MessageBox("Days must be a whole number", "Calendar entry")
+                return None
+            comments = wx.GetTextFromUser("Comments / objectives", "Calendar entry", default_comments)
+            return name, hours, days, comments
+
+        def _ensure_activity(name: str):
+            existing = next((a for a in self.controller.list_activities() if a.name == name), None)
+            return existing or self.controller.add_activity(name)
+
+        def on_add(_evt):
+            choice = _prompt_entry()
+            if not choice:
+                return
+            name, hours, days, comments = choice
+            activity = _ensure_activity(name)
+            chosen = cal.GetDate().FormatISODate()
+            entry_date = date.fromisoformat(chosen)
+            per_day = hours / max(1, days)
+            self.controller.storage.upsert_daily_entry(
+                entry_date,
+                activity.id,
+                duration_hours_delta=0.0,
+                objectives_text=comments,
+                target_hours=per_day,
+                completion_percent=0.0,
+                stop_reason="Calendar add",
+                comments=comments,
+                plan_total_hours=hours,
+                plan_days=days,
+            )
+            _refresh_for(entry_date)
+
+        def on_edit(_evt):
+            sel = list_box.GetSelection()
+            if sel == wx.NOT_FOUND:
+                wx.MessageBox("Select an entry to edit", "Calendar")
+                return
+            data = list_box.GetClientData(sel)
+            if not data:
+                return
+            entry_date, name, duration, _obj, _target, _comp, _stop, comments, plan_total, plan_days = data
+            choice = _prompt_entry(name, plan_total or duration, plan_days or 1, comments)
+            if not choice:
+                return
+            name, hours, days, comments = choice
+            activity = _ensure_activity(name)
+            per_day = hours / max(1, days)
+            delta = hours - duration
+            self.controller.storage.upsert_daily_entry(
+                entry_date,
+                activity.id,
+                duration_hours_delta=delta,
+                objectives_text=comments,
+                target_hours=per_day,
+                completion_percent=0.0,
+                stop_reason="Calendar edit",
+                comments=comments,
+                plan_total_hours=hours,
+                plan_days=days,
+            )
+            _refresh_for(entry_date)
+
+        def on_delete(_evt):
+            sel = list_box.GetSelection()
+            if sel == wx.NOT_FOUND:
+                wx.MessageBox("Select an entry to delete", "Calendar")
+                return
+            data = list_box.GetClientData(sel)
+            if not data:
+                return
+            entry_date, name, *_rest = data
+            activity = next((a for a in self.controller.list_activities() if a.name == name), None)
+            if not activity:
+                wx.MessageBox("Activity missing; nothing to delete", "Calendar")
+                return
+            if wx.MessageBox(f"Delete calendar entry for {name} on {entry_date}?", "Confirm", style=wx.YES_NO) != wx.YES:
+                return
+            self.controller.delete_daily_entry(entry_date, activity.id)
+            _refresh_for(entry_date)
+
         cal.Bind(wx.adv.EVT_CALENDAR_SEL_CHANGED, on_day_changed)
         export_btn.Bind(wx.EVT_BUTTON, on_export)
         import_btn.Bind(wx.EVT_BUTTON, on_import)
+        add_btn.Bind(wx.EVT_BUTTON, on_add)
+        edit_btn.Bind(wx.EVT_BUTTON, on_edit)
+        delete_btn.Bind(wx.EVT_BUTTON, on_delete)
         panel.SetSizer(sizer)
         dlg.Layout()
         _refresh_for(date.today())

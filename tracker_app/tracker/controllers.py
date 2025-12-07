@@ -154,6 +154,10 @@ class AppController:
     def delete_activity(self, activity_id: int) -> None:
         self.storage.delete_activity(activity_id)
 
+    def delete_daily_entry(self, entry_date: date, activity_id: int) -> None:
+        """Delete a specific entry for a date/activity pair."""
+        self.storage.delete_daily_entry(entry_date, activity_id)
+
     # Timer operations
     def start_timer(self, activity_id: int, tick_cb, target_hours: float = 0.0, on_complete=None) -> None:
         self.timers.start(activity_id, tick_cb, target_seconds=target_hours * 3600.0, on_complete=on_complete)
