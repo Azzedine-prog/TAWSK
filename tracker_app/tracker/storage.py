@@ -48,6 +48,7 @@ class Storage:
                     description TEXT,
                     default_target_hours REAL NOT NULL DEFAULT 0,
                     tags TEXT,
+                    priority TEXT NOT NULL DEFAULT 'Medium',
                     is_active INTEGER NOT NULL DEFAULT 1
                 )
                 """
@@ -94,24 +95,30 @@ class Storage:
         _add_column("description", "TEXT", table="activities")
         _add_column("default_target_hours", "REAL NOT NULL DEFAULT 0", table="activities")
         _add_column("tags", "TEXT", table="activities")
+        _add_column("priority", "TEXT NOT NULL DEFAULT 'Medium'", table="activities")
 
     def get_activities(self) -> List[Activity]:
         with self._get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT id, name, description, default_target_hours, tags, is_active FROM activities ORDER BY name ASC"
+                "SELECT id, name, description, default_target_hours, tags, priority, is_active FROM activities ORDER BY name ASC"
             )
             rows = cur.fetchall()
             return [Activity.from_row(row) for row in rows]
 
     def create_activity(
-        self, name: str, description: str = "", default_target_hours: float = 0.0, tags: str = ""
+        self,
+        name: str,
+        description: str = "",
+        default_target_hours: float = 0.0,
+        tags: str = "",
+        priority: str = "Medium",
     ) -> Activity:
         with self._get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO activities (name, description, default_target_hours, tags, is_active) VALUES (?, ?, ?, ?, 1)",
-                (name, description, default_target_hours, tags),
+                "INSERT INTO activities (name, description, default_target_hours, tags, priority, is_active) VALUES (?, ?, ?, ?, ?, 1)",
+                (name, description, default_target_hours, tags, priority),
             )
             activity_id = cur.lastrowid
             LOGGER.info("Created activity %s", name)
@@ -121,6 +128,7 @@ class Storage:
                 description=description,
                 default_target_hours=default_target_hours,
                 tags=tags,
+                priority=priority,
                 is_active=True,
             )
 
@@ -132,6 +140,7 @@ class Storage:
         default_target_hours: Optional[float] = None,
         is_active: Optional[bool] = None,
         tags: Optional[str] = None,
+        priority: Optional[str] = None,
     ) -> None:
         parts: List[str] = []
         params: List[object] = []
@@ -147,6 +156,9 @@ class Storage:
         if tags is not None:
             parts.append("tags = ?")
             params.append(tags)
+        if priority is not None:
+            parts.append("priority = ?")
+            params.append(priority)
         if is_active is not None:
             parts.append("is_active = ?")
             params.append(1 if is_active else 0)

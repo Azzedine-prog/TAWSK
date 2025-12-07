@@ -10,6 +10,7 @@ def test_activity_from_row():
     assert activity.name == "Test"
     assert activity.is_active is True
     assert activity.tags == "focus,deep"
+    assert activity.priority == "Medium"
 
 
 def test_daily_entry_from_row():

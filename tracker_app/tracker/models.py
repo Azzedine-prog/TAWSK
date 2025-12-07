@@ -15,6 +15,7 @@ class Activity:
     description: str = ""
     default_target_hours: float = 0.0
     tags: str = ""
+    priority: str = "Medium"
     is_active: bool = True
 
     @classmethod
@@ -22,13 +23,25 @@ class Activity:
         description = row[2] if len(row) > 2 and row[2] is not None else ""
         default_target = row[3] if len(row) > 3 and row[3] is not None else 0.0
         tags = row[4] if len(row) > 4 and row[4] is not None else ""
-        is_active = bool(row[5]) if len(row) > 5 else bool(row[2]) if len(row) > 2 else True
+        priority = "Medium"
+        is_active = True
+        if len(row) > 5:
+            # Backward compatibility: older schemas had is_active at index 5
+            potential = row[5]
+            if isinstance(potential, str):
+                priority = potential or "Medium"
+            else:
+                is_active = bool(potential)
+        if len(row) > 6:
+            priority = row[5] if isinstance(row[5], str) and row[5] else priority
+            is_active = bool(row[6])
         return cls(
             id=row[0],
             name=row[1],
             description=description,
             default_target_hours=default_target,
             tags=tags,
+            priority=priority,
             is_active=is_active,
         )
 

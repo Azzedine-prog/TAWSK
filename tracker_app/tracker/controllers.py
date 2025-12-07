@@ -32,6 +32,7 @@ class AppConfig:
     last_window_height: int
     last_selected_activity: Optional[int] = None
     last_layout: str = ""
+    last_workspace: str = "Workspace 1"
     show_help_tips: bool = True
     user_id: str = "default-user"
     firebase_credentials: str = ""
@@ -55,6 +56,7 @@ class AppConfig:
             last_window_height=int(data.get("last_window_height", 700)),
             last_selected_activity=last_activity,
             last_layout=data.get("last_layout", ""),
+            last_workspace=data.get("last_workspace", "Workspace 1"),
             show_help_tips=bool(data.get("show_help_tips", True)),
             user_id=data.get("user_id", "default-user"),
             firebase_credentials=data.get("firebase_credentials", ""),
@@ -74,6 +76,7 @@ class AppConfig:
             f"last_window_height = {self.last_window_height}",
             f"last_selected_activity = {last_activity_value}",
             f"last_layout = \"{self.last_layout}\"",
+            f"last_workspace = \"{self.last_workspace}\"",
             f"show_help_tips = {str(bool(self.show_help_tips)).lower()}",
             f"user_id = \"{self.user_id}\"",
             f"firebase_credentials = \"{self.firebase_credentials}\"",
@@ -119,10 +122,19 @@ class AppController:
         return self.storage.get_activities()
 
     def add_activity(
-        self, name: str, description: str = "", default_target_hours: float = 0.0, tags: str = ""
+        self,
+        name: str,
+        description: str = "",
+        default_target_hours: float = 0.0,
+        tags: str = "",
+        priority: str = "Medium",
     ) -> Activity:
         return self.storage.create_activity(
-            name, description=description, default_target_hours=default_target_hours, tags=tags
+            name,
+            description=description,
+            default_target_hours=default_target_hours,
+            tags=tags,
+            priority=priority,
         )
 
     def update_activity(
@@ -133,6 +145,7 @@ class AppController:
         default_target_hours: Optional[float] = None,
         is_active: Optional[bool] = None,
         tags: Optional[str] = None,
+        priority: Optional[str] = None,
     ) -> None:
         self.storage.update_activity(
             activity_id,
@@ -141,6 +154,7 @@ class AppController:
             default_target_hours=default_target_hours,
             is_active=is_active,
             tags=tags,
+            priority=priority,
         )
 
     def duplicate_activity(self, activity_id: int) -> Optional[Activity]:
@@ -159,6 +173,7 @@ class AppController:
             description=source.description,
             default_target_hours=source.default_target_hours,
             tags=source.tags,
+            priority=getattr(source, "priority", "Medium"),
         )
 
     def delete_activity(self, activity_id: int) -> None:

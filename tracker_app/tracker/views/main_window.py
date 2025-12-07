@@ -1,6 +1,7 @@
 """Main window and wxPython application wiring."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -24,6 +25,7 @@ except Exception:  # pragma: no cover - optional dependency
     Calendar = Event = None
 
 from tracker_app.core.ai_service import AIAssistantService
+from tracker_app.tracker import __version__
 from tracker_app.tracker.controllers import AppController, ConfigManager, CONFIG_DIR
 
 LOGGER = logging.getLogger(__name__)
@@ -764,6 +766,7 @@ class ActivityDialog(wx.Dialog):
         description: str = "",
         target: float = 1.0,
         plan_days: int = 1,
+        priority: str = "Medium",
     ):
         super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         main_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -781,6 +784,17 @@ class ActivityDialog(wx.Dialog):
         self.desc_ctrl.SetToolTip("Add context so help popovers can guide you later")
         main_sizer.Add(desc_label, 0, wx.ALL, 6)
         main_sizer.Add(self.desc_ctrl, 1, wx.EXPAND | wx.ALL, 6)
+
+        priority_row = wx.BoxSizer(wx.HORIZONTAL)
+        priority_row.Add(wx.StaticText(self, label="Priority"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        self.priority_choice = wx.Choice(self, choices=["Low", "Medium", "High", "Critical"])
+        self.priority_choice.SetToolTip("Rank this task for the task board")
+        if priority in {"Low", "Medium", "High", "Critical"}:
+            self.priority_choice.SetStringSelection(priority)
+        else:
+            self.priority_choice.SetStringSelection("Medium")
+        priority_row.Add(self.priority_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        main_sizer.Add(priority_row, 0, wx.EXPAND)
 
         plan_row = wx.BoxSizer(wx.HORIZONTAL)
         plan_row.Add(wx.StaticText(self, label="Total"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
@@ -827,11 +841,17 @@ class ActivityDialog(wx.Dialog):
         self.per_day_preview.SetLabel(f"Per-day: {per_day:.2f}h")
         self.Layout()
 
-    def get_values(self) -> tuple[str, str, float, int]:
+    def get_values(self) -> tuple[str, str, float, int, str]:
         total_hours = (self.plan_days_ctrl.GetValue() * 24) + self.plan_hours_ctrl.GetValue() + (
             self.plan_minutes_ctrl.GetValue() / 60.0
         )
-        return self.name_ctrl.GetValue(), self.desc_ctrl.GetValue(), total_hours, max(1, self.plan_split_days_ctrl.GetValue())
+        return (
+            self.name_ctrl.GetValue(),
+            self.desc_ctrl.GetValue(),
+            total_hours,
+            max(1, self.plan_split_days_ctrl.GetValue()),
+            self.priority_choice.GetStringSelection(),
+        )
 
 
 class MainPanel(wx.ScrolledWindow):
@@ -842,6 +862,9 @@ class MainPanel(wx.ScrolledWindow):
         self.ai = AIAssistantService(controller)
         self.selected_activity: Optional[int] = config_manager.config.last_selected_activity
         self.saved_layout: str = config_manager.config.last_layout
+        self.workspace_file = CONFIG_DIR / "layout_config.json"
+        self.workspaces: Dict[str, str] = self._load_workspace_config()
+        self.current_workspace: str = config_manager.config.last_workspace or "Workspace 1"
         self.show_focus_on_start: bool = config_manager.config.show_focus_on_start
         self.active_targets: Dict[int, float] = {}
         self.plan_totals: Dict[int, float] = {}
@@ -979,6 +1002,8 @@ class MainPanel(wx.ScrolledWindow):
         add_button(tools_bar, "Backup", wx.ART_HARDDISK, self._backup_db, "Backup database")
         add_button(tools_bar, "Restore panes", wx.ART_UNDO, self._restore_layout, "Restore layout")
         add_button(tools_bar, "Templates", wx.ART_TIP, self._apply_template, "Add study templates")
+        add_button(tools_bar, "Save workspace", wx.ART_NORMAL_FILE, lambda evt: self._save_current_workspace(), "Save current layout")
+        add_button(tools_bar, "Import layout", wx.ART_FILE_OPEN, self._import_workspace_config, "Load saved layout config")
 
         # Settings page
         settings_page = RB.RibbonPage(ribbon, wx.ID_ANY, "Settings")
@@ -1086,11 +1111,29 @@ class MainPanel(wx.ScrolledWindow):
         reset_btn.SetForegroundColour("white")
         reset_btn.Bind(wx.EVT_BUTTON, self._on_reset_layout)
         reset_btn.SetToolTip("Return to the default floating layout")
+        workspace_label = wx.StaticText(header, label="Workspace")
+        workspace_label.SetForegroundColour("white")
+        self.workspace_choice = wx.Choice(header, choices=list(self.workspaces.keys()))
+        if self.current_workspace in self.workspaces:
+            self.workspace_choice.SetStringSelection(self.current_workspace)
+        self.workspace_choice.Bind(wx.EVT_CHOICE, lambda evt: self._apply_workspace(self.workspace_choice.GetStringSelection()))
+        save_ws_btn = wx.Button(header, label="Save workspace")
+        save_ws_btn.SetBackgroundColour(SECONDARY)
+        save_ws_btn.SetForegroundColour("white")
+        save_ws_btn.Bind(wx.EVT_BUTTON, lambda evt: self._save_current_workspace(self.workspace_choice.GetStringSelection()))
+        import_ws_btn = wx.Button(header, label="Import layout")
+        import_ws_btn.SetBackgroundColour(SECONDARY)
+        import_ws_btn.SetForegroundColour("white")
+        import_ws_btn.Bind(wx.EVT_BUTTON, self._import_workspace_config)
         header_sizer.Add(title, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.Add(subtitle, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 10)
         header_sizer.AddStretchSpacer()
         header_sizer.Add(layout_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(self.layout_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(workspace_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(self.workspace_choice, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(save_ws_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
+        header_sizer.Add(import_ws_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(ai_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(show_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
         header_sizer.Add(reset_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 6)
@@ -1224,7 +1267,7 @@ class MainPanel(wx.ScrolledWindow):
             self.session_panel,
             wx.aui.AuiPaneInfo()
             .Name("session")
-            .Caption("Focus session")
+            .Caption("Task board")
             .CenterPane()
             .BestSize(560, 340)
             .CloseButton(True)
@@ -1282,6 +1325,89 @@ class MainPanel(wx.ScrolledWindow):
             .Show(True),
         )
         self._capture_layouts()
+        if not self.workspaces.get(self.current_workspace):
+            self.workspaces[self.current_workspace] = self.mgr.SavePerspective()
+            self._persist_workspace_config()
+        # Apply last workspace if available
+        self._apply_workspace(self.current_workspace)
+
+    def _default_workspaces(self) -> Dict[str, str]:
+        return {f"Workspace {i}": "" for i in range(1, 4)}
+
+    def _load_workspace_config(self) -> Dict[str, str]:
+        if self.workspace_file.exists():
+            try:
+                data = json.loads(self.workspace_file.read_text(encoding="utf-8"))
+                workspaces = {
+                    item.get("name", f"Workspace {idx}"): item.get("perspective", "")
+                    for idx, item in enumerate(data.get("workspaces", []), start=1)
+                }
+                return workspaces or self._default_workspaces()
+            except Exception:
+                LOGGER.warning("Failed to load workspace config; using defaults")
+        return self._default_workspaces()
+
+    def _persist_workspace_config(self) -> None:
+        payload = {
+            "version": __version__,
+            "workspaces": [{"name": name, "perspective": layout} for name, layout in self.workspaces.items()],
+        }
+        self.workspace_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _apply_workspace(self, name: str) -> None:
+        if not self.mgr:
+            return
+        layout = self.workspaces.get(name)
+        if layout:
+            try:
+                self.mgr.LoadPerspective(layout)
+                self.mgr.Update()
+            except Exception:
+                LOGGER.warning("Failed to apply workspace %s; keeping current layout", name)
+        self.current_workspace = name
+        self.config_manager.config.last_workspace = name
+        self.config_manager.save()
+        if hasattr(self, "workspace_choice"):
+            self.workspace_choice.SetStringSelection(name)
+
+    def _save_current_workspace(self, name: Optional[str] = None) -> None:
+        if not self.mgr:
+            return
+        name = name or getattr(self, "current_workspace", "Workspace 1")
+        self.workspaces[name] = self.mgr.SavePerspective()
+        self._persist_workspace_config()
+        self.config_manager.config.last_workspace = name
+        self.config_manager.save()
+
+    def _save_workspace_as(self, event: Optional[wx.CommandEvent]) -> None:
+        name = wx.GetTextFromUser("Workspace name", "Save workspace", self.current_workspace)
+        if not name:
+            return
+        self._save_current_workspace(name)
+        if hasattr(self, "workspace_choice") and name not in self.workspace_choice.GetItems():
+            self.workspace_choice.Append(name)
+            self.workspace_choice.SetStringSelection(name)
+
+    def _import_workspace_config(self, _event: Optional[wx.CommandEvent] = None) -> None:
+        path = wx.FileSelector("Import workspace config", wildcard="JSON files (*.json)|*.json", flags=wx.FD_OPEN)
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            self.workspaces = {
+                item.get("name", f"Workspace {idx}"): item.get("perspective", "")
+                for idx, item in enumerate(data.get("workspaces", []), start=1)
+            }
+            self._persist_workspace_config()
+            if hasattr(self, "workspace_choice"):
+                self.workspace_choice.Clear()
+                for name in self.workspaces:
+                    self.workspace_choice.Append(name)
+                self.workspace_choice.SetSelection(0)
+            self._apply_workspace(list(self.workspaces.keys())[0])
+        except Exception as exc:
+            LOGGER.exception("Import layout failed")
+            wx.MessageBox(f"Import failed: {exc}", "Workspace import")
 
     def _capture_layouts(self) -> None:
         """Create perspectives with a minimal floating default of three panes."""
@@ -1292,9 +1418,9 @@ class MainPanel(wx.ScrolledWindow):
         for name in panes:
             pane = self.mgr.GetPane(name)
             if pane.IsOk():
-                pane.Show(name in {"activities", "insights", "objectives"})
+                pane.Show(name in {"activities", "session", "insights"})
         self.mgr.GetPane("activities").Left().BestSize(320, 520)
-        self.mgr.GetPane("session").CenterPane().BestSize(520, 340).Show(False)
+        self.mgr.GetPane("session").CenterPane().BestSize(560, 360).Show(True)
         self.mgr.GetPane("insights").Right().BestSize(520, 440)
         self.mgr.GetPane("objectives").Bottom().BestSize(480, 220)
         self.mgr.GetPane("stats_charts").Float().BestSize(640, 460)
@@ -2133,80 +2259,99 @@ class MainPanel(wx.ScrolledWindow):
         return left_card
 
     def _build_session_panel(self, host: wx.Window) -> wx.Panel:
-        timer_card, timer_sizer = self._make_card("Focus session", host)
-        self.timer_label = wx.StaticText(timer_card, label="00:00:00", style=wx.ALIGN_CENTER_HORIZONTAL)
-        font = self.timer_label.GetFont()
-        font.PointSize += 10
-        font = font.Bold()
-        self.timer_label.SetFont(font)
-        self.timer_label.SetForegroundColour(TEXT_ON_DARK)
-        timer_sizer.Add(self.timer_label, 0, wx.EXPAND | wx.ALL, 6)
+        board_card, board_sizer = self._make_card("Task board", host)
+        intro = wx.StaticText(
+            board_card,
+            label="All tasks by priority/status. Double-click to open a timer window; use the toolbar to start or pause.",
+        )
+        intro.Wrap(520)
+        board_sizer.Add(intro, 0, wx.ALL | wx.EXPAND, 4)
 
-        target_row = wx.BoxSizer(wx.HORIZONTAL)
-        target_row.Add(wx.StaticText(timer_card, label="Planned duration"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
-        self.plan_duration_days = wx.SpinCtrl(timer_card, min=0, max=30, initial=0, size=(70, -1))
-        self.plan_duration_days.SetToolTip("Planned days as part of the total duration (optional)")
-        target_row.Add(self.plan_duration_days, 0, wx.ALL, 2)
-        target_row.Add(wx.StaticText(timer_card, label="d"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-        self.plan_hours_spin = wx.SpinCtrlDouble(timer_card, min=0, max=72, inc=0.5, initial=1.0, size=(90, -1))
-        self.plan_hours_spin.SetToolTip("Planned hours for the task")
-        target_row.Add(self.plan_hours_spin, 0, wx.ALL, 2)
-        target_row.Add(wx.StaticText(timer_card, label="h"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-        self.plan_minutes_spin = wx.SpinCtrl(timer_card, min=0, max=59, initial=0, size=(70, -1))
-        self.plan_minutes_spin.SetToolTip("Add minutes for precise planning")
-        target_row.Add(self.plan_minutes_spin, 0, wx.ALL, 2)
-        target_row.Add(wx.StaticText(timer_card, label="min"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-        target_row.AddStretchSpacer()
-        target_row.Add(wx.StaticText(timer_card, label="Spread over"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-        self.plan_days_spin = wx.SpinCtrl(timer_card, min=1, max=30, initial=1, size=(70, -1))
-        self.plan_days_spin.SetToolTip("How many days to divide the planned work across")
-        target_row.Add(self.plan_days_spin, 0, wx.ALL, 2)
-        target_row.Add(wx.StaticText(timer_card, label="day(s)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-        self.per_day_label = wx.StaticText(timer_card, label="Per-day: 1.00h")
-        self.per_day_label.SetForegroundColour(TEXT_ON_DARK)
-        target_row.Add(self.per_day_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
-        self.target_input = wx.SpinCtrlDouble(timer_card, min=0, max=24, inc=0.25, initial=1.0)
-        self.target_input.Hide()  # kept for backward compatibility with existing logic
-        self.progress = wx.Gauge(timer_card, range=100)
-        self.progress.SetToolTip("Progress against the planned hours")
-        timer_sizer.Add(target_row, 0, wx.EXPAND)
-        self.plan_summary = wx.StaticText(timer_card, label="Plan: 1.00h over 1 day (~1.00h/day)")
-        self.plan_summary.SetForegroundColour(TEXT_SECONDARY)
-        timer_sizer.Add(self.plan_summary, 0, wx.ALL | wx.ALIGN_LEFT, 6)
-        for ctrl in (self.plan_duration_days, self.plan_hours_spin, self.plan_minutes_spin, self.plan_days_spin):
-            ctrl.Bind(wx.EVT_SPINCTRL, self._on_plan_changed)
-        self.plan_hours_spin.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_plan_changed)
-        self._on_plan_changed(None)
+        self.task_board = wx.ListCtrl(board_card, style=wx.LC_REPORT | wx.BORDER_SUNKEN)
+        for i, heading in enumerate(["Priority", "Status", "Task", "Plan/day", "Total plan", "Today", "Tags"]):
+            self.task_board.InsertColumn(i, heading)
+        self.task_board.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_board_selected)
+        self.task_board.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._open_task_timer_from_board)
+        board_sizer.Add(self.task_board, 1, wx.EXPAND | wx.ALL, 4)
 
-        today_box = wx.BoxSizer(wx.HORIZONTAL)
-        self.today_hours_label = wx.StaticText(timer_card, label="Today: 0.0 h")
-        self.today_hours_label.SetForegroundColour(TEXT_ON_DARK)
-        today_box.Add(self.today_hours_label, 0, wx.ALL, 4)
-        timer_sizer.Add(today_box, 0, wx.ALL, 2)
-
-        btn_panel = wx.BoxSizer(wx.HORIZONTAL)
-        self.start_btn = wx.Button(timer_card, label="Start")
-        self.pause_btn = wx.Button(timer_card, label="Pause")
-        self.stop_btn = wx.Button(timer_card, label="Stop")
-        self.reset_btn = wx.Button(timer_card, label="Reset")
-        for btn in (self.start_btn, self.pause_btn, self.stop_btn, self.reset_btn):
-            btn.SetBackgroundColour(SECONDARY)
+        toolbar = wx.BoxSizer(wx.HORIZONTAL)
+        def _styled(btn: wx.Button, bg: str) -> None:
+            btn.SetBackgroundColour(bg)
             btn.SetForegroundColour("white")
+            btn.SetMinSize((90, 34))
             font = btn.GetFont()
             font.PointSize += 1
             btn.SetFont(font)
-            btn_panel.Add(btn, 1, wx.ALL, 4)
+
+        self.start_btn = wx.Button(board_card, label="Start")
+        self.pause_btn = wx.Button(board_card, label="Pause")
+        self.stop_btn = wx.Button(board_card, label="Stop")
+        self.reset_btn = wx.Button(board_card, label="Reset")
+        for btn, color in (
+            (self.start_btn, SUCCESS),
+            (self.pause_btn, WARNING),
+            (self.stop_btn, ERROR),
+            (self.reset_btn, DIVIDER),
+        ):
+            _styled(btn, color)
+            toolbar.Add(btn, 0, wx.ALL, 4)
+
         self.start_btn.Bind(wx.EVT_BUTTON, self.on_start)
         self.pause_btn.Bind(wx.EVT_BUTTON, self.on_pause)
         self.stop_btn.Bind(wx.EVT_BUTTON, self.on_stop)
         self.reset_btn.Bind(wx.EVT_BUTTON, self.on_reset)
-        self.start_btn.SetToolTip("Begin tracking the selected activity")
+
+        self.start_btn.SetToolTip("Start the selected task timer")
         self.pause_btn.SetToolTip("Pause without logging yet")
-        self.stop_btn.SetToolTip("Stop and log completion details")
+        self.stop_btn.SetToolTip("Stop and capture completion details")
         self.reset_btn.SetToolTip("Reset today’s timer for this activity")
-        timer_sizer.Add(btn_panel, 0, wx.EXPAND)
-        timer_card.SetSizer(timer_sizer)
-        return timer_card
+        board_sizer.Add(toolbar, 0, wx.ALIGN_LEFT | wx.LEFT | wx.RIGHT, 4)
+
+        # Planning + progress row
+        planner = wx.BoxSizer(wx.HORIZONTAL)
+        planner.Add(wx.StaticText(board_card, label="Plan"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        self.plan_duration_days = wx.SpinCtrl(board_card, min=0, max=30, initial=0, size=(70, -1))
+        self.plan_hours_spin = wx.SpinCtrlDouble(board_card, min=0, max=72, inc=0.5, initial=1.0, size=(90, -1))
+        self.plan_minutes_spin = wx.SpinCtrl(board_card, min=0, max=59, initial=0, size=(70, -1))
+        self.plan_days_spin = wx.SpinCtrl(board_card, min=1, max=30, initial=1, size=(70, -1))
+        for ctrl in (self.plan_duration_days, self.plan_hours_spin, self.plan_minutes_spin, self.plan_days_spin):
+            ctrl.Bind(wx.EVT_SPINCTRL, self._on_plan_changed)
+        self.plan_hours_spin.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_plan_changed)
+        planner.Add(self.plan_duration_days, 0, wx.ALL, 2)
+        planner.Add(wx.StaticText(board_card, label="d"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        planner.Add(self.plan_hours_spin, 0, wx.ALL, 2)
+        planner.Add(wx.StaticText(board_card, label="h"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        planner.Add(self.plan_minutes_spin, 0, wx.ALL, 2)
+        planner.Add(wx.StaticText(board_card, label="min"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        planner.Add(wx.StaticText(board_card, label="over"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        planner.Add(self.plan_days_spin, 0, wx.ALL, 2)
+        planner.Add(wx.StaticText(board_card, label="day(s)"), 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+        self.per_day_label = wx.StaticText(board_card, label="Per-day: 1.00h")
+        self.per_day_label.SetForegroundColour(TEXT_ON_DARK)
+        planner.Add(self.per_day_label, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 4)
+        board_sizer.Add(planner, 0, wx.EXPAND | wx.ALL, 2)
+
+        self.plan_summary = wx.StaticText(board_card, label="Plan: 1.00h over 1 day (~1.00h/day)")
+        self.plan_summary.SetForegroundColour(TEXT_SECONDARY)
+        board_sizer.Add(self.plan_summary, 0, wx.ALL | wx.ALIGN_LEFT, 6)
+        self._on_plan_changed(None)
+
+        self.timer_label = wx.StaticText(board_card, label="00:00:00", style=wx.ALIGN_CENTER_HORIZONTAL)
+        tfont = self.timer_label.GetFont()
+        tfont.PointSize += 8
+        self.timer_label.SetFont(tfont)
+        self.timer_label.SetForegroundColour(TEXT_ON_DARK)
+        board_sizer.Add(self.timer_label, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 4)
+        self.progress = wx.Gauge(board_card, range=100)
+        board_sizer.Add(self.progress, 0, wx.EXPAND | wx.ALL, 6)
+
+        self.target_input = wx.SpinCtrlDouble(board_card, min=0, max=24, inc=0.25, initial=1.0)
+        self.target_input.Hide()  # Backward compatibility
+
+        board_card.SetSizer(board_sizer)
+        board_card.Bind(wx.EVT_WINDOW_DESTROY, lambda evt: setattr(self, "_session_panel_alive", False))
+        self._session_panel_alive = True
+        return board_card
 
     def _build_objectives_panel(self, host: wx.Window) -> wx.Panel:
         objectives_card, obj_sizer = self._make_card("Objectives & notes", host)
@@ -2361,8 +2506,54 @@ class MainPanel(wx.ScrolledWindow):
                 self.activity_list.SetColumnWidth(col, wx.LIST_AUTOSIZE)
             self.history_tab.load_activities()
             self.refresh_today()
+            self._refresh_task_board(activities, today_entries)
 
         self._with_error_dialog("Loading activities", action)
+
+    def _refresh_task_board(
+        self, activities: List[Activity], today_entries: Optional[dict[int, DailyEntry]] = None
+    ) -> None:
+        today_entries = today_entries or {e.activity_id: e for e in self.controller.get_today_entries()}
+        if not hasattr(self, "task_board"):
+            return
+        self.task_board.DeleteAllItems()
+        timers = getattr(self.controller.timers, "timers", {})
+        for act in activities:
+            entry = today_entries.get(act.id)
+            status = "Planned"
+            if act.id in timers and timers[act.id].is_running:
+                status = "Ongoing"
+            elif entry and (entry.completion_percent >= 100 or entry.duration_hours > 0):
+                status = "Completed" if entry.completion_percent >= 100 else "In progress"
+            per_day = 0.0
+            total_plan = act.default_target_hours or 0.0
+            if entry and entry.plan_days:
+                per_day = (entry.plan_total_hours or total_plan) / max(1, entry.plan_days)
+                total_plan = entry.plan_total_hours or total_plan
+            elif total_plan and self.plan_days_spin.GetValue():
+                per_day = total_plan / max(1, self.plan_days_spin.GetValue())
+
+            idx = self.task_board.InsertItem(self.task_board.GetItemCount(), getattr(act, "priority", "Medium"))
+            self.task_board.SetItem(idx, 1, status)
+            self.task_board.SetItem(idx, 2, act.name)
+            self.task_board.SetItem(idx, 3, f"{per_day:.2f}h")
+            self.task_board.SetItem(idx, 4, f"{total_plan:.2f}h")
+            today_hours = entry.duration_hours if entry else 0.0
+            self.task_board.SetItem(idx, 5, f"{today_hours:.2f}h")
+            self.task_board.SetItem(idx, 6, act.tags)
+            self.task_board.SetItemData(idx, act.id or -1)
+        for col in range(7):
+            self.task_board.SetColumnWidth(col, wx.LIST_AUTOSIZE)
+
+    def _on_board_selected(self, event: wx.ListEvent) -> None:  # type: ignore[override]
+        self.selected_activity = event.GetData()
+        if self.selected_activity:
+            self._sync_plan_from_activity(self.selected_activity)
+
+    def _open_task_timer_from_board(self, event: wx.ListEvent) -> None:  # type: ignore[override]
+        self.selected_activity = event.GetData()
+        if self.selected_activity is not None:
+            self.on_open_task_window(None)
 
     def _activity_name(self, activity_id: int) -> str:
         activity = next((a.name for a in self.controller.list_activities() if a.id == activity_id), "Activity")
@@ -2471,10 +2662,12 @@ class MainPanel(wx.ScrolledWindow):
     def on_add_activity(self, event: wx.Event) -> None:
         dlg = ActivityDialog(self, "Add Activity")
         if dlg.ShowModal() == wx.ID_OK:
-            name, desc, target, plan_days = dlg.get_values()
+            name, desc, target, plan_days, priority = dlg.get_values()
             self._with_error_dialog(
                 "Creating activity",
-                lambda: self.controller.add_activity(name, description=desc, default_target_hours=target),
+                lambda: self.controller.add_activity(
+                    name, description=desc, default_target_hours=target, priority=priority
+                ),
             )
             self._set_plan_controls(target, plan_days)
             self.load_activities()
@@ -2493,13 +2686,18 @@ class MainPanel(wx.ScrolledWindow):
             name=activity.name,
             description=activity.description,
             target=activity.default_target_hours,
+            priority=getattr(activity, "priority", "Medium"),
         )
         if dlg.ShowModal() == wx.ID_OK:
-            name, desc, target, plan_days = dlg.get_values()
+            name, desc, target, plan_days, priority = dlg.get_values()
             self._with_error_dialog(
                 "Updating activity",
                 lambda: self.controller.update_activity(
-                    activity_id, name=name, description=desc, default_target_hours=target
+                    activity_id,
+                    name=name,
+                    description=desc,
+                    default_target_hours=target,
+                    priority=priority,
                 ),
             )
             self._set_plan_controls(target, plan_days)
@@ -2564,6 +2762,10 @@ class MainPanel(wx.ScrolledWindow):
         self.progress.SetValue(0)
 
     def _update_timer_display(self, activity_id: int, elapsed_seconds: float) -> None:
+        if not getattr(self, "_session_panel_alive", True):
+            return
+        if not getattr(self, "timer_label", None) or not self.timer_label.IsOk():
+            return
         hours = int(elapsed_seconds) // 3600
         minutes = (int(elapsed_seconds) % 3600) // 60
         seconds = int(elapsed_seconds) % 60
@@ -2572,6 +2774,10 @@ class MainPanel(wx.ScrolledWindow):
         self._update_progress(elapsed_seconds / 3600.0, target)
 
     def _update_progress(self, elapsed_hours: float, target_hours: float) -> None:
+        if not getattr(self, "_session_panel_alive", True):
+            return
+        if not getattr(self, "progress", None) or not self.progress.IsOk():
+            return
         if target_hours > 0:
             percent = min(100, int((elapsed_hours / target_hours) * 100))
             self.progress.SetValue(percent)
@@ -2582,6 +2788,10 @@ class MainPanel(wx.ScrolledWindow):
         self, activity_id: int, state: str, phase: str, work_seconds: float, remaining_seconds: float
     ) -> None:
         """Update the timer label for the Pomodoro/focus session tick."""
+        if not getattr(self, "_session_panel_alive", True):
+            return
+        if not getattr(self, "timer_label", None) or not self.timer_label.IsOk():
+            return
         self.current_focus_activity = activity_id
         hours = int(work_seconds) // 3600
         minutes = (int(work_seconds) % 3600) // 60
