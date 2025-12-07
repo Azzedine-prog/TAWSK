@@ -1,0 +1,7 @@
+export_path = "statistics.xlsx"
+default_range_days = 7
+last_window_width = 1000
+last_window_height = 700
+last_selected_activity = ""
+last_layout = ""
+show_help_tips = true
